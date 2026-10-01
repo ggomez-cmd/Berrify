@@ -11,6 +11,7 @@ import {
   parseQbStatus,
   parseVendorQueryRs,
   xmlEscape,
+  xmlUnescape,
 } from "./qbxml";
 
 const OK_RS = `<?xml version="1.0"?>
@@ -62,6 +63,14 @@ describe("CompanyQuery qbXML", () => {
   it("escapes XML special characters", () => {
     expect(xmlEscape(`A&B <C>`)).toBe("A&amp;B &lt;C&gt;");
   });
+
+  it("decodes named entities and numeric character references once", () => {
+    expect(xmlUnescape("Destiler&#237;a Serrall&#233;s")).toBe("Destilería Serrallés");
+    expect(xmlUnescape("Destiler&#xED;a")).toBe("Destilería");
+    expect(xmlUnescape("Drouyn &amp; Co.")).toBe("Drouyn & Co.");
+    expect(xmlUnescape("&amp;lt;")).toBe("&lt;");
+    expect(xmlUnescape("&lt;VendorRet&gt;")).toBe("<VendorRet>");
+  });
 });
 
 describe("VendorQuery qbXML", () => {
@@ -101,6 +110,81 @@ describe("VendorQuery qbXML", () => {
         fullName: "Jose Santiago Inc (liquor)",
         companyName: null,
         isActive: true,
+      },
+    ]);
+  });
+
+  it("uses the vendor Name and ignores TermsRef, ClassRef, and VendorTypeRef FullName", () => {
+    const parsed = parseVendorQueryRs(`<VendorQueryRs statusCode="0" statusMessage="Status OK">
+      <VendorRet>
+        <ListID>80000032-1674266939</ListID>
+        <Name>Ballester Hermanos (Food)</Name>
+        <IsActive>true</IsActive>
+        <CompanyName>Ballester Hermanos (Food)</CompanyName>
+        <TermsRef>
+          <ListID>80000005-1</ListID>
+          <FullName>Net 30</FullName>
+        </TermsRef>
+      </VendorRet>
+      <VendorRet>
+        <ListID>80000020-1672928703</ListID>
+        <Name>Ballester Hermanos</Name>
+        <IsActive>true</IsActive>
+        <CompanyName>Ballester Hermanos</CompanyName>
+        <VendorTypeRef>
+          <ListID>80000008-1</ListID>
+          <FullName>Food Vendor</FullName>
+        </VendorTypeRef>
+        <TermsRef>
+          <ListID>80000005-2</ListID>
+          <FullName>Net 30</FullName>
+        </TermsRef>
+      </VendorRet>
+      <VendorRet>
+        <ListID>80000021-1</ListID>
+        <Name>Drouyn &amp; Co.</Name>
+        <IsActive>true</IsActive>
+        <CompanyName>Drouyn &amp; Co.</CompanyName>
+        <TermsRef>
+          <ListID>80000006-1</ListID>
+          <FullName>Net 15</FullName>
+        </TermsRef>
+      </VendorRet>
+      <VendorRet>
+        <ListID>80000022-1</ListID>
+        <Name>Destiler&#237;a Serrall&#233;s, Inc.</Name>
+        <IsActive>false</IsActive>
+        <CompanyName>Destiler&#237;a Serrall&#233;s, Inc.</CompanyName>
+        <ClassRef>
+          <ListID>80000009-1</ListID>
+          <FullName>Spirits</FullName>
+        </ClassRef>
+      </VendorRet>
+    </VendorQueryRs>`);
+    expect(parsed.vendors).toEqual([
+      {
+        listId: "80000032-1674266939",
+        fullName: "Ballester Hermanos (Food)",
+        companyName: "Ballester Hermanos (Food)",
+        isActive: true,
+      },
+      {
+        listId: "80000020-1672928703",
+        fullName: "Ballester Hermanos",
+        companyName: "Ballester Hermanos",
+        isActive: true,
+      },
+      {
+        listId: "80000021-1",
+        fullName: "Drouyn & Co.",
+        companyName: "Drouyn & Co.",
+        isActive: true,
+      },
+      {
+        listId: "80000022-1",
+        fullName: "Destilería Serrallés, Inc.",
+        companyName: "Destilería Serrallés, Inc.",
+        isActive: false,
       },
     ]);
   });
