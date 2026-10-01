@@ -54,6 +54,52 @@ describe("ocrImage", () => {
     expect(fallback).toHaveBeenCalledOnce();
   });
 
+  it("sends a downscaled JPEG to Vision for a large photo", async () => {
+    const RealImage = globalThis.Image;
+    class WidePhoto {
+      naturalWidth = 4032;
+      naturalHeight = 3024;
+      width = 4032;
+      height = 3024;
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      set src(_value: string) {
+        void Promise.resolve().then(() => this.onload?.());
+      }
+    }
+    globalThis.Image = WidePhoto as unknown as typeof Image;
+    const jpeg = `data:image/jpeg;base64,${"BB".repeat(24)}`;
+    const getContext = vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+      drawImage() {},
+    } as unknown as CanvasRenderingContext2D);
+    const toDataURL = vi.spyOn(HTMLCanvasElement.prototype, "toDataURL").mockReturnValue(jpeg);
+    const fallback = vi.fn(async () => tesseract);
+    const fetchImpl: typeof fetch = async (input, init) => {
+      expect(String(input)).toBe("/api/ocr");
+      const body = JSON.parse(String(init?.body ?? "{}")) as { image?: string };
+      expect(body.image).toBe(jpeg);
+      return Response.json({ text: "VISION FROM SMALL JPEG", confidence: 90 });
+    };
+    try {
+      const result = await ocrImage("data:image/jpeg;base64,/9j/PC-PHOTO", {
+        engine: "vision",
+        fetchImpl,
+        fallback,
+      });
+      expect(result).toEqual({
+        text: "VISION FROM SMALL JPEG",
+        confidence: 90,
+        rotation: 0,
+        engine: "vision",
+      });
+      expect(fallback).not.toHaveBeenCalled();
+    } finally {
+      globalThis.Image = RealImage;
+      getContext.mockRestore();
+      toDataURL.mockRestore();
+    }
+  });
+
   it("Vision-only does not call Tesseract when /api/ocr succeeds", async () => {
     const fallback = vi.fn(async () => tesseract);
     const fetchImpl: typeof fetch = async () => Response.json({ text: "VISION ONLY", confidence: 91 });

@@ -1,5 +1,22 @@
 export const MAX_INVOICE_IMAGE_BYTES = 8 * 1024 * 1024;
 
+/** Longest side sent to Cloud Vision. Phone photos are larger; DOCUMENT_TEXT_DETECTION is aimed around 1024×768. */
+export const VISION_LONG_EDGE = 2048;
+
+/**
+ * images:annotate rejects JSON bodies over 10 MB. Base64 is about 4/3 of the
+ * file, so the JPEG must stay under both that request cap and the 8 MB photo limit.
+ */
+const VISION_JSON_LIMIT_BYTES = 10 * 1024 * 1024;
+const VISION_REQUEST_OVERHEAD_BYTES = 2 * 1024;
+const VISION_JSON_BASE64_GROUPS = Math.floor(
+  (VISION_JSON_LIMIT_BYTES - VISION_REQUEST_OVERHEAD_BYTES - 1) / 4,
+);
+export const VISION_IMAGE_BYTE_BUDGET = Math.min(
+  MAX_INVOICE_IMAGE_BYTES,
+  VISION_JSON_BASE64_GROUPS * 3,
+);
+
 const RASTER_DATA_URL_RE =
   /^data:(image\/[a-zA-Z0-9.+-]+)(?:;charset=[^;,]+)?;base64,([\s\S]+)$/;
 const ANY_BASE64_DATA_URL_RE =
@@ -90,6 +107,34 @@ function decodeBase64(content: string): Uint8Array {
     bytes[i] = binary.charCodeAt(i);
   }
   return bytes;
+}
+
+export function visionTargetSize(
+  width: number,
+  height: number,
+  longEdge = VISION_LONG_EDGE,
+): { width: number; height: number } {
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    return { width: 1, height: 1 };
+  }
+  const longest = Math.max(width, height);
+  if (longest <= longEdge) {
+    return { width: Math.round(width), height: Math.round(height) };
+  }
+  const scale = longEdge / longest;
+  return {
+    width: Math.max(1, Math.round(width * scale)),
+    height: Math.max(1, Math.round(height * scale)),
+  };
+}
+
+export function dataUrlByteLength(dataUrl: string): number {
+  const comma = dataUrl.indexOf(",");
+  if (comma < 0) return dataUrl.length;
+  const payload = dataUrl.slice(comma + 1).replace(/\s/g, "");
+  if (!/;base64/i.test(dataUrl.slice(0, comma))) return payload.length;
+  const padding = payload.endsWith("==") ? 2 : payload.endsWith("=") ? 1 : 0;
+  return Math.max(0, Math.floor((payload.length * 3) / 4) - padding);
 }
 
 /** Turn a stored invoice photo (data URL, https storage URL, or blob URL) into a raster data URL. */

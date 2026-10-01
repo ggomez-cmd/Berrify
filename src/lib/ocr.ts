@@ -1,6 +1,7 @@
 import { createWorker } from "tesseract.js";
 import { toRasterDataUrl } from "./invoice-image";
 import { supabase } from "./supabase";
+import { downscaleForVision } from "./vision-jpeg";
 
 export type OcrEngine = "vision" | "tesseract";
 
@@ -170,16 +171,18 @@ export async function ocrImage(image: string, options: OcrImageOptions = {}): Pr
   const raster = await toRasterDataUrl(image, fetchImpl);
   const runTesseract = () => (options.fallback ?? ocrImageWithTesseract)(raster);
   const engine = options.engine;
+  if (engine === "tesseract") return runTesseract();
+
+  const visionImage = await downscaleForVision(raster);
+  const runVisionFallback = () => (options.fallback ?? ocrImageWithTesseract)(visionImage);
   if (engine === undefined) {
-    const vision = await ocrImageWithVision(raster, options);
+    const vision = await ocrImageWithVision(visionImage, options);
     if (vision) return vision;
-    return runTesseract();
+    return runVisionFallback();
   }
   switch (engine) {
-    case "tesseract":
-      return runTesseract();
     case "vision":
-      return ocrWithVisionFallback(raster, options, runTesseract);
+      return ocrWithVisionFallback(visionImage, options, runVisionFallback);
     default: {
       const exhaustive: never = engine;
       return exhaustive;
