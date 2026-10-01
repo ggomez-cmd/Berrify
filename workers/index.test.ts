@@ -1,10 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { decode as decodeJpeg, encode as encodeJpeg } from "jpeg-js";
+import { describe, expect, it, vi } from "vitest";
 import {
   EMPTY_BOTTLE_AWAIT_PHOTO,
   EMPTY_BOTTLE_IDENTIFY_UNAVAILABLE,
   EMPTY_BOTTLE_TEXT_HELP,
   emptyCallbackData,
 } from "../src/lib/empty-bottle";
+import { VISION_IMAGE_BYTE_BUDGET, VISION_LONG_EDGE } from "../src/lib/invoice-image";
+import { bytesToBase64, VISION_IMAGE_TOO_LARGE } from "../src/lib/vision-fit";
 import { TELEGRAM_SECRET_HEADER } from "../src/lib/telegram-webhook";
 import { signWhatsAppBody } from "../src/lib/whatsapp-webhook";
 import worker, { handleApi, redirectToHttps, type WorkerEnv } from "./index";
@@ -1113,6 +1116,59 @@ describe("Worker API", () => {
     );
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ text: "FACTURA 12.00", confidence: 91 });
+  });
+
+  it("posts a long-edge JPEG to Vision when the upload is a wide photo", async () => {
+    const width = 2400;
+    const height = 16;
+    const pixels = new Uint8Array(width * height * 4);
+    pixels.fill(180);
+    const original = new Uint8Array(encodeJpeg({ data: pixels, width, height }, 75).data);
+    const image = `data:image/jpeg;base64,${bytesToBase64(original)}`;
+    let visionCalls = 0;
+    const visionFetch: typeof fetch = async (input, init) => {
+      visionCalls += 1;
+      expect(String(input)).toMatch(/^https:\/\/vision\.googleapis\.com\/v1\/images:annotate\?key=vision-key$/);
+      const body = JSON.parse(String(init?.body ?? "{}")) as {
+        requests: { image: { content: string }; features: { type: string }[] }[];
+      };
+      expect(body.requests).toHaveLength(1);
+      expect(body.requests[0]?.features[0]?.type).toBe("DOCUMENT_TEXT_DETECTION");
+      const sent = Uint8Array.from(atob(body.requests[0].image.content), (char) => char.charCodeAt(0));
+      const decoded = decodeJpeg(sent, { useTArray: true });
+      expect(Math.max(decoded.width, decoded.height)).toBeLessThanOrEqual(VISION_LONG_EDGE);
+      expect(decoded.width).not.toBe(width);
+      return Response.json({
+        responses: [{ fullTextAnnotation: { text: "FACTURA 182.86", pages: [{ confidence: 0.8 }] } }],
+      });
+    };
+    const response = await api(
+      "/api/ocr",
+      ocrInit(JSON.stringify({ image })),
+      { ...ocrEnv, GOOGLE_VISION_API_KEY: "vision-key" },
+      mockAuthFetch(visionFetch),
+    );
+    expect(response.status).toBe(200);
+    expect(visionCalls).toBe(1);
+    await expect(response.json()).resolves.toEqual({ text: "FACTURA 182.86", confidence: 80 });
+  });
+
+  it("does not call Vision when the upload cannot be fit under the JSON cap", async () => {
+    const bytes = new Uint8Array(VISION_IMAGE_BYTE_BUDGET + 1);
+    bytes[0] = 0xff;
+    bytes[1] = 0xd8;
+    bytes[2] = 0xff;
+    const image = `data:image/jpeg;base64,${bytesToBase64(bytes)}`;
+    const visionFetch = vi.fn(async () => Response.json({ responses: [] }));
+    const response = await api(
+      "/api/ocr",
+      ocrInit(JSON.stringify({ image })),
+      { ...ocrEnv, GOOGLE_VISION_API_KEY: "vision-key" },
+      mockAuthFetch(visionFetch),
+    );
+    expect(response.status).toBe(413);
+    await expect(response.json()).resolves.toEqual({ error: VISION_IMAGE_TOO_LARGE });
+    expect(visionFetch).not.toHaveBeenCalled();
   });
 
   it("rejects OCR when the image is an https URL instead of a raster data URL", async () => {
