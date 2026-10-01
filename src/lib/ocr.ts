@@ -9,6 +9,8 @@ export type OcrResult = {
   confidence: number;
   rotation: number;
   engine: OcrEngine;
+  /** Set when Vision failed and Tesseract supplied the text. */
+  warning?: string;
 };
 
 export type OcrImageOptions = {
@@ -21,14 +23,14 @@ export type OcrImageOptions = {
 const OCR_ENGINE_KEY = "berrify.ocrEngine";
 
 export function getOcrEngine(): OcrEngine {
-  if (typeof localStorage === "undefined") return "vision";
+  if (typeof localStorage === "undefined") return "tesseract";
   try {
     const value = localStorage.getItem(OCR_ENGINE_KEY);
     if (value === "vision" || value === "tesseract") return value;
   } catch {
     // ignore quota / private-mode failures
   }
-  return "vision";
+  return "tesseract";
 }
 
 export function setOcrEngine(engine: OcrEngine): void {
@@ -176,15 +178,30 @@ export async function ocrImage(image: string, options: OcrImageOptions = {}): Pr
   switch (engine) {
     case "tesseract":
       return runTesseract();
-    case "vision": {
-      const vision = await ocrImageWithVision(raster, options);
-      if (vision) return vision;
-      throw new Error("Vision OCR failed");
-    }
+    case "vision":
+      return ocrWithVisionFallback(raster, options, runTesseract);
     default: {
       const exhaustive: never = engine;
       return exhaustive;
     }
+  }
+}
+
+async function ocrWithVisionFallback(
+  image: string,
+  options: OcrImageOptions,
+  runTesseract: () => Promise<OcrResult>,
+): Promise<OcrResult> {
+  try {
+    const vision = await ocrImageWithVision(image, options);
+    if (vision) return vision;
+    const fallback = await runTesseract();
+    return { ...fallback, warning: "Vision OCR failed" };
+  } catch (error) {
+    const warning =
+      error instanceof Error && error.message.trim() ? error.message : "Vision OCR failed";
+    const fallback = await runTesseract();
+    return { ...fallback, warning };
   }
 }
 

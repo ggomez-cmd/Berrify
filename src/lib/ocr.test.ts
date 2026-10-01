@@ -67,14 +67,48 @@ describe("ocrImage", () => {
     expect(fallback).not.toHaveBeenCalled();
   });
 
-  it("Vision-only throws and does not call Tesseract when /api/ocr fails", async () => {
+  it("explicit Vision falls back to Tesseract when /api/ocr fails", async () => {
     const fallback = vi.fn(async () => tesseract);
     const fetchImpl: typeof fetch = async () =>
       Response.json({ error: "Vision OCR is not configured" }, { status: 503 });
-    await expect(
-      ocrImage("data:image/jpeg;base64,abc", { engine: "vision", fetchImpl, fallback }),
-    ).rejects.toThrow("Vision OCR is not configured");
-    expect(fallback).not.toHaveBeenCalled();
+    const result = await ocrImage("data:image/jpeg;base64,abc", {
+      engine: "vision",
+      fetchImpl,
+      fallback,
+    });
+    expect(result).toEqual({ ...tesseract, warning: "Vision OCR is not configured" });
+    expect(fallback).toHaveBeenCalledOnce();
+  });
+
+  it("explicit Vision falls back on quota and keeps the Google message", async () => {
+    const fallback = vi.fn(async () => tesseract);
+    const fetchImpl: typeof fetch = async () =>
+      Response.json(
+        { error: "Resource has been exhausted (e.g. check quota)." },
+        { status: 429 },
+      );
+    const result = await ocrImage("data:image/jpeg;base64,abc", {
+      engine: "vision",
+      fetchImpl,
+      fallback,
+    });
+    expect(result.engine).toBe("tesseract");
+    expect(result.text).toBe(tesseract.text);
+    expect(result.warning).toBe("Resource has been exhausted (e.g. check quota).");
+    expect(fallback).toHaveBeenCalledOnce();
+  });
+
+  it("explicit Vision falls back when /api/ocr is Unauthorized", async () => {
+    const fallback = vi.fn(async () => tesseract);
+    const fetchImpl: typeof fetch = async () =>
+      Response.json({ error: "Unauthorized" }, { status: 401 });
+    const result = await ocrImage("data:image/jpeg;base64,abc", {
+      engine: "vision",
+      fetchImpl,
+      fallback,
+    });
+    expect(result).toMatchObject({ engine: "tesseract", text: tesseract.text, warning: "Unauthorized" });
+    expect(fallback).toHaveBeenCalledOnce();
   });
 
   it("Tesseract-only does not call /api/ocr", async () => {
@@ -131,9 +165,9 @@ describe("ocrImage", () => {
 });
 
 describe("getOcrEngine / setOcrEngine", () => {
-  it("defaults to vision and persists the selected engine", () => {
+  it("defaults to tesseract and persists an explicit Vision choice", () => {
     localStorage.removeItem("berrify.ocrEngine");
-    expect(getOcrEngine()).toBe("vision");
+    expect(getOcrEngine()).toBe("tesseract");
     setOcrEngine("tesseract");
     expect(localStorage.getItem("berrify.ocrEngine")).toBe("tesseract");
     expect(getOcrEngine()).toBe("tesseract");

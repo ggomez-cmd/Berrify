@@ -222,8 +222,9 @@ export function InvoicesPage() {
         });
         ids.push(id);
       }
+      const ocrNote = ocr.warning ? `${ocr.warning} · ${ocrEngineNote(ocr)}` : ocrEngineNote(ocr);
       setMessage(
-        `${ids.length} digital bill${ids.length === 1 ? "" : "s"} created${route ? ` for ${route.restaurant.qbo_company_name}` : ""}. ${ocrEngineNote(ocr)} · ${extractEngineNote(extractEngine, extractError)} · review the restaurant and Expenses tab, then export IIF.`,
+        `${ids.length} digital bill${ids.length === 1 ? "" : "s"} created${route ? ` for ${route.restaurant.qbo_company_name}` : ""}. ${ocrNote} · ${extractEngineNote(extractEngine, extractError)} · review the restaurant and Expenses tab, then export IIF.`,
       );
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Could not read invoice");

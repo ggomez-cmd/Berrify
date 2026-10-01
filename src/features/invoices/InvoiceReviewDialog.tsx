@@ -376,6 +376,7 @@ export function InvoiceReviewDialog({
       .then(async (ocr) => {
         setOcrText(ocr.text);
         setOcrNote(ocrEngineNote(ocr));
+        if (ocr.warning) setError(ocr.warning);
         await applyPreview(ocr.text, true, image, ocr.confidence);
       })
       .catch((err) => {
