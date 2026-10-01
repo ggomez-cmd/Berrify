@@ -94,6 +94,85 @@ describe("downscaleForVision", () => {
       toDataURL.mockRestore();
     }
   });
+
+  it("still downscales when Image.src rejects the data URL", async () => {
+    const RealImage = globalThis.Image;
+    const seen: string[] = [];
+    vi.stubGlobal("createImageBitmap", async () => {
+      throw new Error("bitmap decode failed");
+    });
+    class RejectsDataUrl {
+      naturalWidth = 4032;
+      naturalHeight = 3024;
+      width = 4032;
+      height = 3024;
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      set src(value: string) {
+        seen.push(value);
+        if (value.startsWith("data:")) {
+          void Promise.resolve().then(() => this.onerror?.());
+          return;
+        }
+        void Promise.resolve().then(() => this.onload?.());
+      }
+    }
+    const previousCreate = URL.createObjectURL;
+    const previousRevoke = URL.revokeObjectURL;
+    URL.createObjectURL = () => "blob:invoice-photo";
+    URL.revokeObjectURL = () => {};
+    globalThis.Image = RejectsDataUrl as unknown as typeof Image;
+    const jpeg = `data:image/jpeg;base64,${"CC".repeat(16)}`;
+    const getContext = vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+      drawImage() {},
+    } as unknown as CanvasRenderingContext2D);
+    const toDataURL = vi.spyOn(HTMLCanvasElement.prototype, "toDataURL").mockImplementation(function (
+      this: HTMLCanvasElement,
+    ) {
+      expect(this.width).toBe(2048);
+      expect(this.height).toBe(1536);
+      return jpeg;
+    });
+    try {
+      await expect(downscaleForVision("data:image/jpeg;base64,/9j/4AAQ")).resolves.toBe(jpeg);
+      expect(seen.some((src) => src.startsWith("data:"))).toBe(false);
+      expect(seen.some((src) => src.startsWith("blob:"))).toBe(true);
+    } finally {
+      globalThis.Image = RealImage;
+      if (previousCreate) URL.createObjectURL = previousCreate;
+      else Reflect.deleteProperty(URL, "createObjectURL");
+      if (previousRevoke) URL.revokeObjectURL = previousRevoke;
+      else Reflect.deleteProperty(URL, "revokeObjectURL");
+      vi.unstubAllGlobals();
+      getContext.mockRestore();
+      toDataURL.mockRestore();
+    }
+  });
+
+  it("downscales a createImageBitmap photo without assigning the data URL", async () => {
+    const RealImage = globalThis.Image;
+    const imageSpy = vi.fn();
+    globalThis.Image = imageSpy as unknown as typeof Image;
+    vi.stubGlobal("createImageBitmap", async () => ({
+      width: 4032,
+      height: 3024,
+      close() {},
+    }));
+    const jpeg = `data:image/jpeg;base64,${"DD".repeat(16)}`;
+    const getContext = vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+      drawImage() {},
+    } as unknown as CanvasRenderingContext2D);
+    const toDataURL = vi.spyOn(HTMLCanvasElement.prototype, "toDataURL").mockReturnValue(jpeg);
+    try {
+      await expect(downscaleForVision("data:image/jpeg;base64,/9j/4AAQ")).resolves.toBe(jpeg);
+      expect(imageSpy).not.toHaveBeenCalled();
+    } finally {
+      globalThis.Image = RealImage;
+      vi.unstubAllGlobals();
+      getContext.mockRestore();
+      toDataURL.mockRestore();
+    }
+  });
 });
 
 describe("isRasterDataUrl / toRasterDataUrl", () => {

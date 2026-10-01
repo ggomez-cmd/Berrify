@@ -1,4 +1,5 @@
 import { MAX_INVOICE_IMAGE_BYTES } from "../src/lib/invoice-image";
+import { bytesToBase64, fitImageForVision, VISION_IMAGE_TOO_LARGE } from "../src/lib/vision-fit";
 import { boundFetch } from "./bound-fetch";
 
 export type OcrPostEnv = {
@@ -129,6 +130,13 @@ export function parseImageDataUrl(image: unknown):
   return { ok: true, content, mime: match[1].toLowerCase() };
 }
 
+function decodeBase64(content: string): Uint8Array {
+  const binary = atob(content);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
 export async function requireSession(
   request: Request,
   env: OcrPostEnv,
@@ -186,6 +194,14 @@ export async function handleOcrPost(
     return json({ error: parsed.error }, parsed.status);
   }
 
+  let visionContent: string;
+  try {
+    const fitted = fitImageForVision(decodeBase64(parsed.content), parsed.mime);
+    visionContent = bytesToBase64(fitted.bytes);
+  } catch {
+    return json({ error: VISION_IMAGE_TOO_LARGE }, 413);
+  }
+
   const visionUrl = `https://vision.googleapis.com/v1/images:annotate?key=${encodeURIComponent(apiKey)}`;
   let visionResponse: Response;
   try {
@@ -195,7 +211,7 @@ export async function handleOcrPost(
       body: JSON.stringify({
         requests: [
           {
-            image: { content: parsed.content },
+            image: { content: visionContent },
             features: [{ type: "DOCUMENT_TEXT_DETECTION" }],
             imageContext: { languageHints: ["es", "en"] },
           },

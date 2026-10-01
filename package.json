@@ -30,6 +30,8 @@
     "@radix-ui/react-dialog": "^1.1.23",
     "@supabase/supabase-js": "^2.115.0",
     "@tanstack/react-query": "^5.102.8",
+    "fast-png": "^8.0.0",
+    "jpeg-js": "^0.4.4",
     "lucide-react": "^1.41.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
