@@ -165,9 +165,9 @@ describe("ocrImage", () => {
 });
 
 describe("getOcrEngine / setOcrEngine", () => {
-  it("defaults to tesseract and persists an explicit Vision choice", () => {
+  it("defaults to vision and persists the selected engine", () => {
     localStorage.removeItem("berrify.ocrEngine");
-    expect(getOcrEngine()).toBe("tesseract");
+    expect(getOcrEngine()).toBe("vision");
     setOcrEngine("tesseract");
     expect(localStorage.getItem("berrify.ocrEngine")).toBe("tesseract");
     expect(getOcrEngine()).toBe("tesseract");

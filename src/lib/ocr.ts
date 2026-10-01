@@ -23,14 +23,14 @@ export type OcrImageOptions = {
 const OCR_ENGINE_KEY = "berrify.ocrEngine";
 
 export function getOcrEngine(): OcrEngine {
-  if (typeof localStorage === "undefined") return "tesseract";
+  if (typeof localStorage === "undefined") return "vision";
   try {
     const value = localStorage.getItem(OCR_ENGINE_KEY);
     if (value === "vision" || value === "tesseract") return value;
   } catch {
     // ignore quota / private-mode failures
   }
-  return "tesseract";
+  return "vision";
 }
 
 export function setOcrEngine(engine: OcrEngine): void {
