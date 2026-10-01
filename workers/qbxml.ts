@@ -37,13 +37,40 @@ export function xmlEscape(value: string): string {
     .replace(/'/g, "&apos;");
 }
 
+function xmlCodePoint(code: number): string | null {
+  if (!Number.isInteger(code) || code < 0 || code > 0x10ffff) return null;
+  if (code >= 0xd800 && code <= 0xdfff) return null;
+  return String.fromCodePoint(code);
+}
+
 export function xmlUnescape(value: string): string {
-  return value
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'")
-    .replace(/&amp;/g, "&");
+  return value.replace(
+    /&(?:#(\d+)|#x([0-9a-fA-F]+)|(lt|gt|quot|apos|amp));/g,
+    (entity, dec: string | undefined, hex: string | undefined) => {
+      if (dec) {
+        const decoded = xmlCodePoint(Number(dec));
+        return decoded ?? entity;
+      }
+      if (hex) {
+        const decoded = xmlCodePoint(Number.parseInt(hex, 16));
+        return decoded ?? entity;
+      }
+      switch (entity) {
+        case "&lt;":
+          return "<";
+        case "&gt;":
+          return ">";
+        case "&quot;":
+          return '"';
+        case "&apos;":
+          return "'";
+        case "&amp;":
+          return "&";
+        default:
+          return entity;
+      }
+    },
+  );
 }
 
 export function xmlText(xml: string, tag: string): string | null {
@@ -51,6 +78,36 @@ export function xmlText(xml: string, tag: string): string | null {
   if (!match) return null;
   const text = xmlUnescape(match[1].trim());
   return text.length > 0 ? text : null;
+}
+
+const XML_TAG_RE = /<\/?([A-Za-z_][\w:.-]*)\b[^>]*?>/g;
+
+/** Text of a leaf element that is a direct child of the outermost element. */
+function xmlDirectText(xml: string, tag: string): string | null {
+  const wanted = tag.toLowerCase();
+  const tagRe = new RegExp(XML_TAG_RE.source, "g");
+  let depth = 0;
+  let match: RegExpExecArray | null;
+  while ((match = tagRe.exec(xml))) {
+    const full = match[0];
+    const name = match[1] ?? "";
+    const closing = full.startsWith("</");
+    const selfClosing = !closing && full.endsWith("/>");
+    if (closing) {
+      depth -= 1;
+      continue;
+    }
+    if (depth === 1 && name.toLowerCase() === wanted && !selfClosing) {
+      const rest = xml.slice(tagRe.lastIndex);
+      const end = new RegExp(`</${name}\\s*>`, "i").exec(rest);
+      if (end && !/<[A-Za-z_]/.test(rest.slice(0, end.index))) {
+        const text = xmlUnescape(rest.slice(0, end.index).trim());
+        return text.length > 0 ? text : null;
+      }
+    }
+    if (!selfClosing) depth += 1;
+  }
+  return null;
 }
 
 export function xmlBlocks(xml: string, tag: string): string[] {
@@ -259,14 +316,16 @@ export function parseVendorQueryRs(xml: string): VendorQueryResult {
   const status = parseQbStatus(xml, "VendorQueryRs");
   const vendors: VendorQueryRow[] = [];
   for (const block of xmlBlocks(xml, "VendorRet")) {
-    const listId = xmlText(block, "ListID");
-    const fullName = xmlText(block, "FullName") ?? xmlText(block, "Name");
+    const listId = xmlDirectText(block, "ListID");
+    // VendorRet has no list FullName. The first FullName in the block is a nested
+    // ref (TermsRef "Net 30", ClassRef, VendorTypeRef). BillAdd matches Name.
+    const fullName = xmlDirectText(block, "FullName") ?? xmlDirectText(block, "Name");
     if (!listId || !fullName) continue;
     vendors.push({
       listId,
       fullName,
-      companyName: xmlText(block, "CompanyName"),
-      isActive: parseIsActive(xmlText(block, "IsActive")),
+      companyName: xmlDirectText(block, "CompanyName"),
+      isActive: parseIsActive(xmlDirectText(block, "IsActive")),
     });
   }
   return { ...status, vendors };
