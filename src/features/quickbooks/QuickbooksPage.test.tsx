@@ -63,6 +63,14 @@ vi.mock("./hooks", () => ({
   useQuickbooksJobs: () => ({ data: [], refetch: vi.fn() }),
   useQuickbooksVendors: () => ({ data: [], refetch: vi.fn() }),
   useQuickbooksAccounts: () => ({ data: [], refetch: vi.fn() }),
+  useQuickbooksOnlineConnections: () => ({ data: [], refetch: vi.fn() }),
+  useQuickbooksOnlineConfig: () => ({
+    data: {
+      configured: false,
+      redirect_uri: "https://berrify.app/api/qbo/callback",
+      missing: ["INTUIT_CLIENT_ID", "INTUIT_CLIENT_SECRET"],
+    },
+  }),
 }));
 
 function renderPage(role: AuthState["role"] = "admin") {
@@ -88,6 +96,10 @@ describe("QuickbooksPage", () => {
     expect(screen.getByRole("button", { name: "Refresh accounts" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Regenerate password" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Connect QuickBooks Desktop" })).toBeInTheDocument();
+    expect(screen.getByText("Online not connected")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Connect QuickBooks Online" })).toHaveLength(1);
+    expect(screen.getByText(/INTUIT_CLIENT_ID and INTUIT_CLIENT_SECRET/)).toBeInTheDocument();
+    expect(screen.getByText(/https:\/\/berrify.app\/api\/qbo\/callback/)).toBeInTheDocument();
     expect(screen.queryByText(/service-role/i)).toBeNull();
   });
 

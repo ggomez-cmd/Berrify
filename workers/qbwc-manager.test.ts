@@ -132,6 +132,7 @@ function sendFetch(options: {
   invoice?: unknown[] | "missing";
   connections?: unknown[];
   jobs?: Array<Record<string, unknown>>;
+  online?: unknown[];
 }): typeof fetch {
   const jobs = options.jobs ?? [];
   return async (input, init) => {
@@ -161,6 +162,15 @@ function sendFetch(options: {
           is_active: true,
         },
       ]);
+    }
+    if (url.includes("quickbooks_online_connections") && method === "GET") {
+      const rows = (options.online ?? []) as Array<{ restaurant_id: string }>;
+      if (url.includes("restaurant_id=eq.")) {
+        const match = /restaurant_id=eq\.([^&]+)/.exec(url);
+        const restaurantId = decodeURIComponent(match?.[1] ?? "");
+        return Response.json(rows.filter((row) => row.restaurant_id === restaurantId));
+      }
+      return Response.json(rows);
     }
     if (url.includes("quickbooks_desktop_connections") && method === "GET") {
       const rows = (options.connections ?? [kaneConn]) as Array<{ restaurant_id: string | null }>;

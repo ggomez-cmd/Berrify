@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   accountSyncSummary,
   invoiceBillJob,
+  invoiceBooksStatus,
   invoiceQbJobLabel,
+  qboOnlineStatusLabel,
   qbwcStatusLabel,
   qbwcUiStatus,
   vendorSyncSummary,
@@ -141,5 +143,42 @@ describe("invoice QuickBooks job labels", () => {
     expect(invoiceQbJobLabel(job({ status: "failed", error_message: "Vendor not found" }))).toBe(
       "Failed · Vendor not found",
     );
+    expect(invoiceBooksStatus(null, "991")).toEqual({ label: "Synced (991)", tone: "ok" });
+    expect(invoiceBooksStatus(null, "pending:1:abc")).toEqual({ label: "Sending", tone: "info" });
+    expect(invoiceBooksStatus(null, null)).toBeNull();
+  });
+});
+
+describe("QuickBooks Online card status", () => {
+  it("labels connected, error, and missing Online companies", () => {
+    expect(qboOnlineStatusLabel(null)).toEqual({ label: "Online not connected", tone: "neutral" });
+    expect(
+      qboOnlineStatusLabel({
+        id: "q1",
+        org_id: "org-1",
+        restaurant_id: "rest-1",
+        realm_id: "123",
+        company_name: "Semilla",
+        is_active: true,
+        last_synced_at: null,
+        last_error: null,
+        created_at: "2026-10-03T00:00:00.000Z",
+        updated_at: "2026-10-03T00:00:00.000Z",
+      }),
+    ).toEqual({ label: "Online connected", tone: "ok" });
+    expect(
+      qboOnlineStatusLabel({
+        id: "q1",
+        org_id: "org-1",
+        restaurant_id: "rest-1",
+        realm_id: "123",
+        company_name: "Semilla",
+        is_active: true,
+        last_synced_at: null,
+        last_error: "token expired",
+        created_at: "2026-10-03T00:00:00.000Z",
+        updated_at: "2026-10-03T00:00:00.000Z",
+      }),
+    ).toEqual({ label: "Online error", tone: "danger" });
   });
 });

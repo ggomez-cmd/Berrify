@@ -449,6 +449,19 @@ export type PayrollExportLine = {
   created_at: string;
 };
 
+export type QuickbooksOnlineConnection = {
+  id: string;
+  org_id: string;
+  restaurant_id: string;
+  realm_id: string;
+  company_name: string | null;
+  is_active: boolean;
+  last_synced_at: string | null;
+  last_error: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export type QuickbooksDesktopConnection = {
   id: string;
   org_id: string;

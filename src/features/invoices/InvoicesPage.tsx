@@ -30,12 +30,13 @@ import { assertInvoiceImage } from "../../lib/invoice-image";
 import { getOcrEngine, ocrEngineNote, ocrImage, setOcrEngine, type OcrEngine } from "../../lib/ocr";
 import { isManager } from "../../lib/schedule";
 import { matchRestaurant } from "../../lib/restaurant-route";
-import { invoiceBillJob, invoiceQbJobLabel } from "../../lib/qbwc-status";
+import { invoiceBillJob, invoiceBooksStatus } from "../../lib/qbwc-status";
 import type { InvoiceSource, InvoiceWithSupplier } from "../../lib/types";
 import {
   useQuickbooksAccounts,
   useQuickbooksConnections,
   useQuickbooksJobs,
+  useQuickbooksOnlineConnections,
   useQuickbooksVendors,
 } from "../quickbooks/hooks";
 import { useSuppliers } from "../suppliers/hooks";
@@ -60,23 +61,6 @@ function confirmDeleteInvoice(invoice: InvoiceWithSupplier) {
   return window.confirm(detail ? `Delete this invoice? ${detail}` : "Delete this invoice?");
 }
 
-function qbJobTone(status: NonNullable<ReturnType<typeof invoiceBillJob>>["status"]) {
-  switch (status) {
-    case "completed":
-      return "ok" as const;
-    case "failed":
-      return "danger" as const;
-    case "sending":
-      return "info" as const;
-    case "pending":
-      return "warn" as const;
-    default: {
-      const exhaustive: never = status;
-      return exhaustive;
-    }
-  }
-}
-
 function statusTone(status: InvoiceWithSupplier["status"]) {
   switch (status) {
     case "received":
@@ -99,6 +83,7 @@ export function InvoicesPage() {
   const { data: invoices = [], isLoading, error, refetch: refetchInvoices } = useInvoices();
   const { data: qbJobs = [], refetch: refetchQbJobs } = useQuickbooksJobs();
   const { data: qbConnections = [] } = useQuickbooksConnections();
+  const { data: qbOnlineConnections = [] } = useQuickbooksOnlineConnections();
   const { data: qbVendors = [] } = useQuickbooksVendors();
   const { data: qbAccounts = [] } = useQuickbooksAccounts();
   const { data: suppliers = [] } = useSuppliers();
@@ -185,7 +170,7 @@ export function InvoicesPage() {
       for (const bill of invoicesToPersistFromPhoto(extracted)) {
         const restaurantId = route?.restaurant.id ?? null;
         const scopedAccounts = accountsForConnection(
-          connectionIdForInvoiceAccounts(restaurantId, qbConnections),
+          connectionIdForInvoiceAccounts(restaurantId, qbConnections, qbOnlineConnections),
           qbAccounts,
         );
         const match = matchQbVendor({
@@ -193,7 +178,7 @@ export function InvoicesPage() {
           ocrText,
           lines: bill.lines,
           vendors: vendorsForConnection(
-            connectionIdForInvoiceVendors(restaurantId, qbConnections),
+            connectionIdForInvoiceVendors(restaurantId, qbConnections, qbOnlineConnections),
             qbVendors,
           ),
           aliases: vendorAliases,
@@ -238,7 +223,7 @@ export function InvoicesPage() {
       <p className="mb-4 max-w-2xl text-sm text-muted">
         Photograph a supplier invoice or a WhatsApp forward from that restaurant’s group.
         Berrify picks the books from the group name, caption, or sold-to (Semilla vs Kane
-        Rum Bar), then rolls SKUs into that restaurant’s QuickBooks Desktop Expenses tab.
+        Rum Bar), then rolls SKUs into that restaurant’s QuickBooks expense accounts.
       </p>
 
       <div className="mb-4 flex flex-wrap items-center gap-2 md:flex-nowrap">
@@ -376,6 +361,7 @@ export function InvoicesPage() {
                 .filter((invoice) => statusTab === "all" || invoice.status === statusTab)
                 .map((invoice) => {
                 const qbJob = invoiceBillJob(qbJobs, invoice.id);
+                const booksStatus = invoiceBooksStatus(qbJob, invoice.quickbooks_txn_id);
                 return (
                 <tr key={invoice.id} className="hover:bg-paper">
                   <Td>
@@ -398,9 +384,9 @@ export function InvoicesPage() {
                       <Badge tone={statusTone(invoice.status)} dot>
                         {invoice.status}
                       </Badge>
-                      {qbJob ? (
-                        <Badge tone={qbJobTone(qbJob.status)} dot>
-                          {invoiceQbJobLabel(qbJob, invoice.quickbooks_txn_id ?? qbJob.quickbooks_txn_id)}
+                      {booksStatus ? (
+                        <Badge tone={booksStatus.tone} dot>
+                          {booksStatus.label}
                         </Badge>
                       ) : null}
                     </div>

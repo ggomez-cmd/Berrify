@@ -2,6 +2,7 @@ import { boundAssetFetch, boundFetch } from "./bound-fetch";
 import { handleEmptyBottleIdentifyPost } from "./empty-bottle-identify-post";
 import { handleInvoiceExtractPost } from "./invoice-extract-post";
 import { handleOcrPost } from "./ocr-post";
+import { handleQbo } from "./qbo-manager";
 import { handleQbwcManager } from "./qbwc-manager";
 import { handleQbwcSoapPost } from "./qbwc-soap";
 import { handleTelegramPost } from "./telegram-post";
@@ -24,6 +25,9 @@ export type WorkerEnv = {
   NEXT_PUBLIC_SUPABASE_URL?: string;
   SUPABASE_SERVICE_ROLE_KEY?: string;
   PUBLIC_APP_URL?: string;
+  INTUIT_CLIENT_ID?: string;
+  INTUIT_CLIENT_SECRET?: string;
+  INTUIT_ENVIRONMENT?: string;
   GOOGLE_VISION_API_KEY?: string;
   GEMINI_API_KEY?: string;
   GEMINI_MODEL?: string;
@@ -168,6 +172,9 @@ export async function handleApi(
       }
     }
   }
+
+  const qbo = await handleQbo(request, env, path, fetchImpl);
+  if (qbo) return withSecurityHeaders(qbo);
 
   const qbwcManager = await handleQbwcManager(request, env, path, fetchImpl);
   if (qbwcManager) return withSecurityHeaders(qbwcManager);

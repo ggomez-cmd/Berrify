@@ -80,8 +80,11 @@ export function classifyInvoiceSide(
 export function connectionIdForInvoiceVendors(
   restaurantId: string | null,
   connections: Array<{ id: string; restaurant_id: string | null; is_active: boolean }>,
+  onlineConnections: Array<{ id: string; restaurant_id: string | null; is_active: boolean }> = [],
 ): string | null {
   if (restaurantId) {
+    const online = onlineConnections.find((row) => row.restaurant_id === restaurantId && row.is_active);
+    if (online) return online.id;
     const scoped = connections.find((row) => row.restaurant_id === restaurantId && row.is_active);
     if (scoped) return scoped.id;
   }

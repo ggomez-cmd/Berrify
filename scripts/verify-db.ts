@@ -39,6 +39,10 @@ const requiredTables = [
   "quickbooks_sync_jobs",
   "quickbooks_vendors",
   "quickbooks_accounts",
+  "quickbooks_online_connections",
+  "quickbooks_online_oauth_states",
+  "quickbooks_online_vendors",
+  "quickbooks_online_accounts",
   "invoice_pages",
 ] as const;
 
@@ -79,6 +83,10 @@ const requiredPolicies: Record<(typeof requiredTables)[number], string[]> = {
   quickbooks_sync_jobs: ["quickbooks_sync_jobs_select_manager"],
   quickbooks_vendors: ["quickbooks_vendors_manager"],
   quickbooks_accounts: ["quickbooks_accounts_manager"],
+  quickbooks_online_connections: ["quickbooks_online_connections_select_manager"],
+  quickbooks_online_oauth_states: [],
+  quickbooks_online_vendors: ["quickbooks_online_vendors_select_manager"],
+  quickbooks_online_accounts: ["quickbooks_online_accounts_select_manager"],
   invoice_pages: ["invoice_pages_manager"],
 };
 

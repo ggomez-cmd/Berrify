@@ -39,6 +39,8 @@ successful company query. Re-download does not change OwnerID or FileID.
 3. Click **Send to QuickBooks**. Berrify queues a `bill_add` job on that
    restaurant’s Connected connector, or the org shared connector if the
    restaurant has none. Semilla invoices are never sent to Kane’s company file.
+   A restaurant with QuickBooks Online connected does not queue BillAdd; that
+   Send posts to Online instead (`docs/qbo-online.md`).
 4. In Web Connector, click **Update Selected** (or wait for Auto-Run).
 5. Invoice job status moves Queued → Sending → **Synced** with the QuickBooks
    `TxnID`, or **Failed** with the QuickBooks message. Use **Send to QuickBooks**
