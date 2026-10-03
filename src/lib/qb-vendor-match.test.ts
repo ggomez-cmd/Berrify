@@ -94,6 +94,34 @@ describe("QB vendor match", () => {
     expect(match.reason).toBe("alias");
   });
 
+  it("uses a restaurant QuickBooks Online connection instead of the shared Desktop file", () => {
+    const connectionId = connectionIdForInvoiceVendors(
+      "rest-semilla",
+      [
+        { id: "conn-kane", restaurant_id: "rest-kane", is_active: true },
+        { id: "conn-shared", restaurant_id: null, is_active: true },
+      ],
+      [{ id: "qbo-semilla", restaurant_id: "rest-semilla", is_active: true }],
+    );
+    expect(connectionId).toBe("qbo-semilla");
+    expect(
+      vendorsForConnection(connectionId, [
+        { ...semillaSingle, connection_id: "qbo-semilla" },
+        kaneFood,
+      ]),
+    ).toEqual([{ ...semillaSingle, connection_id: "qbo-semilla" }]);
+  });
+
+  it("keeps Kane on Desktop when another restaurant is Online", () => {
+    expect(
+      connectionIdForInvoiceVendors(
+        "rest-kane",
+        [{ id: "conn-kane", restaurant_id: "rest-kane", is_active: true }],
+        [{ id: "qbo-semilla", restaurant_id: "rest-semilla", is_active: true }],
+      ),
+    ).toBe("conn-kane");
+  });
+
   it("never uses Kane vendors for a Semilla connection", () => {
     const connectionId = connectionIdForInvoiceVendors("rest-semilla", [
       { id: "conn-kane", restaurant_id: "rest-kane", is_active: true },

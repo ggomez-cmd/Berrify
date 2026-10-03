@@ -43,9 +43,14 @@ import type {
   VendorAliasRow,
 } from "../../lib/types";
 import { sendInvoiceToQuickBooks } from "../../lib/qbwc-manager-api";
-import { invoiceQbJobLabel } from "../../lib/qbwc-status";
+import { invoiceBooksStatus } from "../../lib/qbwc-status";
 import type { QuickbooksSyncJob } from "../../lib/types";
-import { useQuickbooksAccounts, useQuickbooksConnections, useQuickbooksVendors } from "../quickbooks/hooks";
+import {
+  useQuickbooksAccounts,
+  useQuickbooksConnections,
+  useQuickbooksOnlineConnections,
+  useQuickbooksVendors,
+} from "../quickbooks/hooks";
 import { InvoicePhotoLightbox } from "./InvoicePhotoLightbox";
 import { InvoiceReviewAccountField } from "./InvoiceReviewAccountField";
 import { InvoiceReviewPhotoColumn } from "./InvoiceReviewPhotoColumn";
@@ -192,6 +197,7 @@ export function InvoiceReviewDialog({
   const media = useInvoiceMedia(open && invoice ? invoice.id : null);
   const pagesQuery = useInvoicePages(open && invoice ? invoice.id : null);
   const { data: qbConnections = [] } = useQuickbooksConnections();
+  const { data: qbOnlineConnections = [] } = useQuickbooksOnlineConnections();
   const { data: qbVendors = [] } = useQuickbooksVendors();
   const { data: qbAccounts = [] } = useQuickbooksAccounts();
   const ocrStartedFor = useRef<string | null>(null);
@@ -217,6 +223,7 @@ export function InvoiceReviewDialog({
   const [vendorOptions, setVendorOptions] = useState<string[]>([]);
   const [apAccount, setApAccount] = useState<string>(ACCOUNTS.ap);
   const [qbBusy, setQbBusy] = useState(false);
+  const [sentTxnId, setSentTxnId] = useState<string | null>(null);
   const addPageInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -266,6 +273,7 @@ export function InvoiceReviewDialog({
     setVendorOptions([]);
     setApAccount(invoice.ap_account || ACCOUNTS.ap);
     setQbBusy(false);
+    setSentTxnId(null);
     ocrStartedFor.current = null;
   }, [open, invoice]);
 
@@ -316,9 +324,13 @@ export function InvoiceReviewDialog({
         note ? `${note} · ${preview.extractNote}` : preview.extractNote,
       );
       if (!preview.first) return;
-      const connectionId = connectionIdForInvoiceVendors(preview.restaurantId, qbConnections);
+      const connectionId = connectionIdForInvoiceVendors(
+        preview.restaurantId,
+        qbConnections,
+        qbOnlineConnections,
+      );
       const scopedAccounts = accountsForConnection(
-        connectionIdForInvoiceAccounts(preview.restaurantId, qbConnections),
+        connectionIdForInvoiceAccounts(preview.restaurantId, qbConnections, qbOnlineConnections),
         qbAccounts,
       );
       const match = matchQbVendor({
@@ -397,6 +409,7 @@ export function InvoiceReviewDialog({
     extractExamples,
     photoSrc,
     qbConnections,
+    qbOnlineConnections,
     qbVendors,
     qbAccounts,
   ]);
@@ -409,7 +422,7 @@ export function InvoiceReviewDialog({
   if (!invoice) return null;
 
   const scopedAccounts = accountsForConnection(
-    connectionIdForInvoiceAccounts(restaurantId || null, qbConnections),
+    connectionIdForInvoiceAccounts(restaurantId || null, qbConnections, qbOnlineConnections),
     qbAccounts,
   );
   const scopedApAccounts = apAccountsForSelect(scopedAccounts);
@@ -480,7 +493,13 @@ export function InvoiceReviewDialog({
     Boolean(restaurantId) &&
     Boolean(vendor.trim()) &&
     expenses.some((line) => Number.isFinite(line.amount) && line.amount !== 0 && line.account.trim());
-  const qbLocked = qbJob?.status === "pending" || qbJob?.status === "sending" || qbJob?.status === "completed";
+  const postedTxnId = sentTxnId ?? invoice.quickbooks_txn_id;
+  const booksStatus = invoiceBooksStatus(qbJob ?? null, postedTxnId);
+  const qbLocked =
+    Boolean(postedTxnId) ||
+    qbJob?.status === "pending" ||
+    qbJob?.status === "sending" ||
+    qbJob?.status === "completed";
 
   const sendToQuickBooks = async () => {
     if (!canSendToQb) {
@@ -490,7 +509,8 @@ export function InvoiceReviewDialog({
     setQbBusy(true);
     try {
       await persist("reviewed");
-      await sendInvoiceToQuickBooks(invoice.id);
+      const sent = await sendInvoiceToQuickBooks(invoice.id);
+      if (sent.quickbooks_txn_id) setSentTxnId(sent.quickbooks_txn_id);
       onQbJobChange?.();
     } catch (err) {
       setError(toThrownError(err, "Could not send invoice to QuickBooks").message);
@@ -636,7 +656,7 @@ export function InvoiceReviewDialog({
                 new Set([
                   ...vendorOptions,
                   ...vendorsForConnection(
-                    connectionIdForInvoiceVendors(restaurantId || null, qbConnections),
+                    connectionIdForInvoiceVendors(restaurantId || null, qbConnections, qbOnlineConnections),
                     qbVendors,
                   ).map((row) => row.full_name),
                   ...suppliers.map((row) => row.name),
@@ -875,10 +895,8 @@ export function InvoiceReviewDialog({
         </details>
       ) : null}
 
-      {qbJob ? (
-        <p className="mt-3 text-sm text-muted">
-          QuickBooks: {invoiceQbJobLabel(qbJob, invoice.quickbooks_txn_id ?? qbJob.quickbooks_txn_id)}
-        </p>
+      {booksStatus ? (
+        <p className="mt-3 text-sm text-muted">QuickBooks: {booksStatus.label}</p>
       ) : null}
       {error ? <p className="mt-3 text-sm text-danger">{error}</p> : null}
       <div className="mt-5 flex flex-wrap justify-end gap-2">

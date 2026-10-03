@@ -44,6 +44,31 @@ export function invoiceQbJobUi(job: QuickbooksSyncJob): InvoiceQbJobUi {
   }
 }
 
+export function invoiceBooksStatus(
+  job: QuickbooksSyncJob | null,
+  txnId?: string | null,
+): { label: string; tone: "ok" | "danger" | "info" | "warn" } | null {
+  if (job) {
+    const ui = invoiceQbJobUi(job);
+    switch (ui) {
+      case "synced":
+        return { label: invoiceQbJobLabel(job, txnId), tone: "ok" };
+      case "failed":
+        return { label: invoiceQbJobLabel(job, txnId), tone: "danger" };
+      case "sending":
+        return { label: invoiceQbJobLabel(job, txnId), tone: "info" };
+      case "queued":
+        return { label: invoiceQbJobLabel(job, txnId), tone: "warn" };
+      default: {
+        const exhaustive: never = ui;
+        return exhaustive;
+      }
+    }
+  }
+  if (txnId) return { label: `Synced (${txnId})`, tone: "ok" };
+  return null;
+}
+
 export function invoiceQbJobLabel(job: QuickbooksSyncJob, txnId?: string | null): string {
   const ui = invoiceQbJobUi(job);
   switch (ui) {

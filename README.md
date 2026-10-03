@@ -195,7 +195,13 @@ npx wrangler secret put NEXT_PUBLIC_SUPABASE_URL
 npx wrangler secret put SUPABASE_SERVICE_ROLE_KEY
 npx wrangler secret put GOOGLE_VISION_API_KEY
 npx wrangler secret put GEMINI_API_KEY
+npx wrangler secret put INTUIT_CLIENT_ID
+npx wrangler secret put INTUIT_CLIENT_SECRET
 ```
+
+QuickBooks Online also needs those two Intuit secrets and redirect URL
+`https://berrify.app/api/qbo/callback`. See `docs/qbo-online.md`. Apply
+`0026_quickbooks_online.sql` with `npm run db:apply` (not `db:push`).
 
 Set the same `GEMINI_API_KEY` in the Cloudflare dashboard (Workers → Settings → Variables and Secrets) as you do for Vision. Use a **billed** Gemini API key from Google AI Studio / Gemini API. Do not turn on Google’s “used to improve products” / training-data sharing for that key. Never put `GEMINI_API_KEY` in Vite/`NEXT_PUBLIC_*` or the browser.
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   accountSyncSummary,
   invoiceBillJob,
+  invoiceBooksStatus,
   invoiceQbJobLabel,
   qbwcStatusLabel,
   qbwcUiStatus,
@@ -141,5 +142,7 @@ describe("invoice QuickBooks job labels", () => {
     expect(invoiceQbJobLabel(job({ status: "failed", error_message: "Vendor not found" }))).toBe(
       "Failed · Vendor not found",
     );
+    expect(invoiceBooksStatus(null, "991")).toEqual({ label: "Synced (991)", tone: "ok" });
+    expect(invoiceBooksStatus(null, null)).toBeNull();
   });
 });

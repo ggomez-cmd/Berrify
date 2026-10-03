@@ -14,9 +14,13 @@ import { enqueueAccountQueryJob, enqueueBillAddJob, enqueueVendorQueryJob } from
 import { buildQwcXml, publicAppUrl, qbwcAppSupportUrl, qbwcAppUrl } from "./qbwc-qwc";
 import { buildBillAddRq } from "./qbxml";
 import { resolveQbAccountRef, type QbAccountRow } from "../src/lib/qb-account-match";
+import { trySendQboInvoice } from "./qbo-send";
 
 export type QbwcManagerEnv = QbwcRestEnv & {
   PUBLIC_APP_URL?: string;
+  INTUIT_CLIENT_ID?: string;
+  INTUIT_CLIENT_SECRET?: string;
+  INTUIT_ENVIRONMENT?: string;
 };
 
 type ManagerUser = {
@@ -342,6 +346,7 @@ type InvoiceSendRow = {
   ap_account: string;
   status: string;
   total: number;
+  quickbooks_txn_id?: string | null;
   suppliers: { name: string } | { name: string }[] | null;
   invoice_expense_lines: Array<{ account: string; amount: number; memo: string | null }>;
 };
@@ -423,7 +428,7 @@ export async function handleSendInvoice(
   const invoiceRes = await fetchImpl(
     restUrl(
       supabaseUrl,
-      `invoices?id=eq.${encodeURIComponent(invoiceId)}&org_id=eq.${encodeURIComponent(manager.orgId)}&select=id,org_id,restaurant_id,supplier_id,vendor_name,invoice_number,invoice_date,due_date,terms,ap_account,status,total,suppliers(name),invoice_expense_lines(account,amount,memo)&limit=1`,
+      `invoices?id=eq.${encodeURIComponent(invoiceId)}&org_id=eq.${encodeURIComponent(manager.orgId)}&select=id,org_id,restaurant_id,supplier_id,vendor_name,invoice_number,invoice_date,due_date,terms,ap_account,status,total,quickbooks_txn_id,suppliers(name),invoice_expense_lines(account,amount,memo)&limit=1`,
     ),
     { headers: { ...supabaseHeaders(serviceRole), Accept: "application/json" } },
   );
@@ -447,6 +452,27 @@ export async function handleSendInvoice(
   if (expenses.length === 0) {
     return json({ error: "Add at least one expense line with an amount" }, 400);
   }
+  const online = await trySendQboInvoice(
+    env,
+    manager.orgId,
+    {
+      id: invoice.id,
+      restaurantId: invoice.restaurant_id,
+      vendorName: vendor,
+      invoiceNumber: invoice.invoice_number,
+      invoiceDate: invoice.invoice_date,
+      dueDate: invoice.due_date,
+      apAccount: invoice.ap_account,
+      quickbooksTxnId: invoice.quickbooks_txn_id ?? null,
+      expenses: expenses.map((line) => ({
+        account: line.account,
+        amount: Number(line.amount),
+        memo: line.memo ?? null,
+      })),
+    },
+    fetchImpl,
+  );
+  if (online) return online;
   const connection = await resolveInvoiceConnection(env, manager.orgId, invoice.restaurant_id, fetchImpl);
   if (!connection) {
     return json(

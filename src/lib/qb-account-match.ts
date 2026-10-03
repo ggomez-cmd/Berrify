@@ -15,8 +15,9 @@ export type QbAccountRow = {
 export function connectionIdForInvoiceAccounts(
   restaurantId: string | null,
   connections: Array<{ id: string; restaurant_id: string | null; is_active: boolean }>,
+  onlineConnections: Array<{ id: string; restaurant_id: string | null; is_active: boolean }> = [],
 ): string | null {
-  return connectionIdForInvoiceVendors(restaurantId, connections);
+  return connectionIdForInvoiceVendors(restaurantId, connections, onlineConnections);
 }
 
 export function accountsForConnection(connectionId: string | null, accounts: QbAccountRow[]): QbAccountRow[] {
@@ -147,7 +148,7 @@ function scoreAccount(row: QbAccountRow, kind: QbAccountKind, description?: stri
     }
     case "ap": {
       let score = 0;
-      if (type === "AccountsPayable") score += 100;
+      if (type === "AccountsPayable" || type === "Accounts Payable") score += 100;
       if (/accounts\s*payable|20000/.test(hay)) score += 80;
       return score;
     }

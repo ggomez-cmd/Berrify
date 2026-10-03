@@ -14,3 +14,8 @@ GOOGLE_VISION_API_KEY=
 # expose to the browser. Keep Google “used to improve products” / training
 # data sharing off for this key.
 GEMINI_API_KEY=
+# QuickBooks Online. Private app keys. Never commit real values.
+# Redirect URL: https://berrify.app/api/qbo/callback
+INTUIT_CLIENT_ID=
+INTUIT_CLIENT_SECRET=
+# INTUIT_ENVIRONMENT=sandbox

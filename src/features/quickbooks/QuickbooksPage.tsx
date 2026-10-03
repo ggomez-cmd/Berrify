@@ -1,10 +1,16 @@
 import { Download, KeyRound, Plug, RefreshCw, ShieldOff } from "lucide-react";
 import { useMemo, useState } from "react";
-import { Navigate } from "react-router-dom";
+import { Navigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../../auth/auth-context";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Card } from "../../components/ui/card";
+import {
+  disconnectQbo,
+  refreshQboAccounts,
+  refreshQboVendors,
+  startQboConnect,
+} from "../../lib/qbo-manager-api";
 import {
   createQbwcConnection,
   downloadBerrifyQwc,
@@ -15,9 +21,21 @@ import {
 } from "../../lib/qbwc-manager-api";
 import { accountSyncSummary, qbwcStatusLabel, qbwcUiStatus, vendorSyncSummary } from "../../lib/qbwc-status";
 import { isManager } from "../../lib/schedule";
-import type { QbwcUiStatus, QuickbooksDesktopConnection, Restaurant } from "../../lib/types";
+import type {
+  QbwcUiStatus,
+  QuickbooksDesktopConnection,
+  QuickbooksOnlineConnection,
+  Restaurant,
+} from "../../lib/types";
 import { useRestaurants } from "../invoices/hooks";
-import { useQuickbooksAccounts, useQuickbooksConnections, useQuickbooksJobs, useQuickbooksVendors } from "./hooks";
+import {
+  useQuickbooksAccounts,
+  useQuickbooksConnections,
+  useQuickbooksJobs,
+  useQuickbooksOnlineConfig,
+  useQuickbooksOnlineConnections,
+  useQuickbooksVendors,
+} from "./hooks";
 
 function statusTone(status: QbwcUiStatus) {
   switch (status) {
@@ -47,8 +65,11 @@ type CardTarget = {
 
 export function QuickbooksPage() {
   const { role } = useAuth();
+  const [searchParams] = useSearchParams();
   const { data: restaurants = [] } = useRestaurants();
   const { data: connections = [], isLoading, error, refetch } = useQuickbooksConnections();
+  const { data: onlineConnections = [], refetch: refetchOnline } = useQuickbooksOnlineConnections();
+  const { data: qboConfig } = useQuickbooksOnlineConfig();
   const { data: jobs = [], refetch: refetchJobs } = useQuickbooksJobs();
   const { data: vendors = [], refetch: refetchVendors } = useQuickbooksVendors();
   const { data: accounts = [], refetch: refetchAccounts } = useQuickbooksAccounts();
@@ -82,8 +103,13 @@ export function QuickbooksPage() {
     connections.find((row) => (row.restaurant_id ?? null) === restaurantId) ?? null;
 
   const refresh = async () => {
-    await Promise.all([refetch(), refetchJobs(), refetchVendors(), refetchAccounts()]);
+    await Promise.all([refetch(), refetchOnline(), refetchJobs(), refetchVendors(), refetchAccounts()]);
   };
+
+  const onlineFor = (restaurantId: string | null) =>
+    restaurantId
+      ? (onlineConnections.find((row) => row.restaurant_id === restaurantId && row.is_active) ?? null)
+      : null;
 
   const connect = async (target: CardTarget) => {
     setBusyKey(target.key);
@@ -167,6 +193,61 @@ export function QuickbooksPage() {
     }
   };
 
+  const connectOnline = async (restaurantId: string) => {
+    setBusyKey(`qbo:${restaurantId}`);
+    setMessage(null);
+    try {
+      const result = await startQboConnect(restaurantId);
+      window.location.assign(result.url);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Could not connect QuickBooks Online");
+      setBusyKey(null);
+    }
+  };
+
+  const refreshOnlineVendors = async (connection: QuickbooksOnlineConnection) => {
+    setBusyKey(connection.id);
+    setMessage(null);
+    try {
+      await refreshQboVendors(connection.id);
+      await refresh();
+      setMessage("Vendors synced from QuickBooks Online for this company.");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Could not refresh QuickBooks Online vendors");
+    } finally {
+      setBusyKey(null);
+    }
+  };
+
+  const refreshOnlineAccounts = async (connection: QuickbooksOnlineConnection) => {
+    setBusyKey(connection.id);
+    setMessage(null);
+    try {
+      await refreshQboAccounts(connection.id);
+      await refresh();
+      setMessage("Accounts synced from QuickBooks Online for this company.");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Could not refresh QuickBooks Online accounts");
+    } finally {
+      setBusyKey(null);
+    }
+  };
+
+  const disconnectOnline = async (connection: QuickbooksOnlineConnection) => {
+    if (!window.confirm(`Disconnect QuickBooks Online for ${connection.company_name || "this restaurant"}?`)) return;
+    setBusyKey(connection.id);
+    setMessage(null);
+    try {
+      await disconnectQbo(connection.id);
+      await refresh();
+      setMessage("QuickBooks Online disconnected for this restaurant.");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Could not disconnect QuickBooks Online");
+    } finally {
+      setBusyKey(null);
+    }
+  };
+
   const download = async (connection: QuickbooksDesktopConnection) => {
     setBusyKey(connection.id);
     setMessage(null);
@@ -182,10 +263,24 @@ export function QuickbooksPage() {
   return (
     <div className="space-y-4">
       <p className="max-w-3xl text-sm text-muted">
-        QuickBooks Web Connector pulls from Berrify. First sync is a read-only company query — this page does
-        not post Bills. Invoice IIF export is unchanged. Windows Web Connector steps are in{" "}
-        <span className="font-mono">docs/qbwc-desktop.md</span>.
+        QuickBooks Desktop uses Web Connector. QuickBooks Online is a separate connect on a restaurant card.
+        This page does not post Bills. A manager sends one invoice at a time. Invoice IIF export is unchanged.
+        Windows Web Connector steps are in <span className="font-mono">docs/qbwc-desktop.md</span>. Online
+        setup is in <span className="font-mono">docs/qbo-online.md</span>.
       </p>
+
+      {searchParams.get("qbo") === "connected" ? (
+        <p className="text-sm text-ink">
+          QuickBooks Online connected.
+          {searchParams.get("message") ? ` ${searchParams.get("message")}` : " Vendors and accounts were synced for that company."}
+        </p>
+      ) : null}
+      {searchParams.get("qbo") === "denied" ? (
+        <p className="text-sm text-ink">QuickBooks Online connect was cancelled.</p>
+      ) : null}
+      {searchParams.get("qbo") === "error" ? (
+        <p className="text-sm text-danger">{searchParams.get("message") || "QuickBooks Online connect failed."}</p>
+      ) : null}
 
       {oneTime ? (
         <Card className="border-wine/30 bg-wine/5">
@@ -205,11 +300,14 @@ export function QuickbooksPage() {
       <div className="grid gap-4 lg:grid-cols-2">
         {targets.map((target) => {
           const connection = connectionFor(target.restaurantId);
+          const online = onlineFor(target.restaurantId);
           const status = qbwcUiStatus(
             connection,
             jobs.filter((job) => job.connection_id === connection?.id),
           );
-          const busy = busyKey === target.key || busyKey === connection?.id;
+          const busy = busyKey === target.key || busyKey === connection?.id || busyKey === online?.id || busyKey === `qbo:${target.restaurantId}`;
+          const onlineVendors = online ? vendors.filter((row) => row.connection_id === online.id && row.is_active) : [];
+          const onlineAccounts = online ? accounts.filter((row) => row.connection_id === online.id && row.is_active) : [];
           return (
             <Card key={target.key}>
               <div className="flex items-start justify-between gap-3">
@@ -308,6 +406,68 @@ export function QuickbooksPage() {
                   </>
                 )}
               </div>
+
+              {target.restaurantId ? (
+                <div className="mt-4 border-t border-line pt-4">
+                  <p className="text-sm font-semibold text-ink">QuickBooks Online</p>
+                  {online ? (
+                    <>
+                      <p className="mt-2 text-sm text-ink">
+                        {online.company_name || "Connected company"}
+                        {online.realm_id ? ` · realm ${online.realm_id}` : ""}
+                      </p>
+                      <p className="mt-1 text-xs text-muted">
+                        Send posts a Bill to this company. Desktop BillAdd is not queued.
+                      </p>
+                      <p className="mt-2 text-xs text-muted">
+                        {onlineVendors.length} vendor{onlineVendors.length === 1 ? "" : "s"}
+                        {" · "}
+                        {onlineAccounts.length} account{onlineAccounts.length === 1 ? "" : "s"}
+                        {online.last_synced_at ? ` · ${new Date(online.last_synced_at).toLocaleString()}` : ""}
+                      </p>
+                      {online.last_error ? <p className="mt-2 text-sm text-danger">{online.last_error}</p> : null}
+                    </>
+                  ) : (
+                    <p className="mt-1 text-xs text-muted">
+                      Separate from Desktop. Send for this restaurant uses this company only.
+                    </p>
+                  )}
+                  {qboConfig && !qboConfig.configured ? (
+                    <p className="mt-2 text-xs text-muted">
+                      Connect needs Worker secrets INTUIT_CLIENT_ID and INTUIT_CLIENT_SECRET. Redirect URL:{" "}
+                      {qboConfig.redirect_uri}
+                    </p>
+                  ) : null}
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {online ? (
+                      <>
+                        <Button variant="outline" onClick={() => void refreshOnlineVendors(online)} disabled={busy}>
+                          <RefreshCw className="size-4" />
+                          Refresh Online vendors
+                        </Button>
+                        <Button variant="outline" onClick={() => void refreshOnlineAccounts(online)} disabled={busy}>
+                          <RefreshCw className="size-4" />
+                          Refresh Online accounts
+                        </Button>
+                        <Button variant="danger" onClick={() => void disconnectOnline(online)} disabled={busy}>
+                          <ShieldOff className="size-4" />
+                          Disconnect QuickBooks Online
+                        </Button>
+                      </>
+                    ) : (
+                      <Button
+                        onClick={() => {
+                          if (target.restaurantId) void connectOnline(target.restaurantId);
+                        }}
+                        disabled={busy}
+                      >
+                        <Plug className="size-4" />
+                        Connect QuickBooks Online
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              ) : null}
             </Card>
           );
         })}
