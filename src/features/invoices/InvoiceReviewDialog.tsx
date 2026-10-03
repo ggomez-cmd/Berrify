@@ -540,7 +540,7 @@ export function InvoiceReviewDialog({
         onOpenChange(next);
       }}
       title={invoice.invoice_number ? `Bill ${invoice.invoice_number}` : "Review invoice"}
-      description="Confirm SKUs and the QuickBooks Desktop Expenses tab, then Send to QuickBooks or export IIF."
+      description="Confirm SKUs and expense accounts, then Send to QuickBooks or export IIF."
       className="max-h-[92vh] w-[min(1100px,calc(100vw-1.5rem))] overflow-y-auto"
     >
       <div className="grid gap-4 lg:grid-cols-2">

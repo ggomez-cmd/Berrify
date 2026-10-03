@@ -9,6 +9,7 @@ import {
   qboApiBase,
   qboRedirectUri,
   requestIntuitToken,
+  revokeIntuitToken,
 } from "./qbo-api";
 import {
   ensureOnlineAccessToken,
@@ -59,6 +60,19 @@ function booksUrl(env: QboSendEnv, query: Record<string, string>): string {
 
 function safeNotice(value: string): string {
   return value.replace(/\s+/g, " ").trim().slice(0, 180);
+}
+
+async function deleteExpiredOauthStates(env: QboSendEnv, fetchImpl: typeof fetch): Promise<void> {
+  const supabaseUrl = env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceRole = env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!supabaseUrl || !serviceRole) return;
+  await fetchImpl(
+    restUrl(
+      supabaseUrl,
+      `quickbooks_online_oauth_states?expires_at=lt.${encodeURIComponent(new Date().toISOString())}`,
+    ),
+    { method: "DELETE", headers: supabaseHeaders(serviceRole) },
+  );
 }
 
 export async function handleQbo(
@@ -164,6 +178,7 @@ async function handleConnect(
     }),
   });
   if (!inserted.ok) return json({ error: "Could not start QuickBooks Online" }, 400);
+  await deleteExpiredOauthStates(env, fetchImpl);
   const clientId = env.INTUIT_CLIENT_ID?.trim() ?? "";
   return json({
     url: buildAuthorizeUrl({ clientId, redirectUri, state }),
@@ -205,6 +220,7 @@ async function handleCallback(request: Request, env: QboSendEnv, fetchImpl: type
     method: "DELETE",
     headers: supabaseHeaders(serviceRole),
   });
+  await deleteExpiredOauthStates(env, fetchImpl);
   const pending = stateRows[0];
   if (!pending || Date.parse(pending.expires_at) < Date.now()) {
     return redirect(booksUrl(env, { qbo: "error", message: "QuickBooks Online connect expired. Try again." }));
@@ -428,6 +444,13 @@ async function handleDisconnect(
   if (manager instanceof Response) return manager;
   const connection = await loadOwnedConnection(env, manager.orgId, connectionId, fetchImpl);
   if (!connection) return json({ error: "Not found" }, 404);
+  if (connection.refresh_token && missingIntuitSecrets(env).length === 0) {
+    await revokeIntuitToken(fetchImpl, {
+      clientId: env.INTUIT_CLIENT_ID?.trim() ?? "",
+      clientSecret: env.INTUIT_CLIENT_SECRET?.trim() ?? "",
+      token: connection.refresh_token,
+    });
+  }
   const cleared = await patchConnection(
     env,
     connection.id,

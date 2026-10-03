@@ -1,9 +1,18 @@
 import { foldVendorName } from "../src/lib/qb-vendor-match";
+import {
+  QBO_SEND_PENDING_PREFIX,
+  isPersistedQboBillId,
+  newQboSendClaim,
+  parseQboSendClaim,
+} from "../src/lib/qbo-bill-id";
+
+export { QBO_SEND_PENDING_PREFIX, isPersistedQboBillId, newQboSendClaim, parseQboSendClaim };
 
 export const QBO_ACCOUNTING_SCOPE = "com.intuit.quickbooks.accounting";
 export const QBO_MINOR_VERSION = "75";
 export const INTUIT_AUTHORIZE_URL = "https://appcenter.intuit.com/connect/oauth2";
 export const INTUIT_TOKEN_URL = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer";
+export const INTUIT_REVOKE_URL = "https://developer.api.intuit.com/v2/oauth2/tokens/revoke";
 export const QBO_PRODUCTION_API = "https://quickbooks.api.intuit.com";
 export const QBO_SANDBOX_API = "https://sandbox-quickbooks.api.intuit.com";
 
@@ -140,10 +149,28 @@ export function buildQboBillBody(input: {
 export function parseQboBill(payload: unknown): { id: string; syncToken: string | null } | null {
   if (!payload || typeof payload !== "object") return null;
   const bill = (payload as { Bill?: { Id?: unknown; SyncToken?: unknown } }).Bill;
-  if (!bill) return null;
+  if (!bill || typeof bill !== "object") return null;
+  return billRef(bill as Record<string, unknown>);
+}
+
+function billRef(bill: Record<string, unknown>): { id: string; syncToken: string | null } | null {
   const id = entityId(bill.Id);
   if (!id) return null;
   return { id, syncToken: typeof bill.SyncToken === "string" ? bill.SyncToken : null };
+}
+
+export function parseQboBillsFromQuery(
+  payload: unknown,
+): Array<{ id: string; syncToken: string | null; vendorId: string | null; docNumber: string | null }> {
+  return queryResponseEntities(payload, "Bill").flatMap((row) => {
+    const parsed = billRef(row);
+    if (!parsed) return [];
+    const vendor = row.VendorRef;
+    const vendorId =
+      vendor && typeof vendor === "object" ? entityId((vendor as { value?: unknown }).value) : entityId(vendor);
+    const docNumber = typeof row.DocNumber === "string" ? row.DocNumber.trim() : null;
+    return [{ ...parsed, vendorId, docNumber }];
+  });
 }
 
 export function mapQueryVendors(payload: unknown): QboVendorRecord[] {
@@ -212,11 +239,18 @@ function entityId(value: unknown): string | null {
   return null;
 }
 
-function entityList(payload: unknown, key: "Vendor" | "Account"): Array<Record<string, unknown>> {
+export function queryResponseEntities(payload: unknown, key: string): Array<Record<string, unknown>> {
   if (!payload || typeof payload !== "object") return [];
   const rows = (payload as { QueryResponse?: Record<string, unknown> }).QueryResponse?.[key];
-  if (!Array.isArray(rows)) return [];
-  return rows.filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === "object");
+  if (Array.isArray(rows)) {
+    return rows.filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === "object");
+  }
+  if (rows && typeof rows === "object") return [rows as Record<string, unknown>];
+  return [];
+}
+
+function entityList(payload: unknown, key: "Vendor" | "Account" | "Bill"): Array<Record<string, unknown>> {
+  return queryResponseEntities(payload, key);
 }
 
 function basicAuth(clientId: string, clientSecret: string): string {
@@ -257,6 +291,24 @@ export async function requestIntuitToken(
   }
   const expiresIn = typeof row.expires_in === "number" && row.expires_in > 0 ? row.expires_in : 3600;
   return { accessToken: row.access_token, refreshToken: row.refresh_token, expiresIn };
+}
+
+export async function revokeIntuitToken(
+  fetchImpl: typeof fetch,
+  input: { clientId: string; clientSecret: string; token: string },
+): Promise<{ ok: true } | { error: string }> {
+  const response = await fetchImpl(INTUIT_REVOKE_URL, {
+    method: "POST",
+    headers: {
+      Authorization: `Basic ${basicAuth(input.clientId, input.clientSecret)}`,
+      "Content-Type": "application/x-www-form-urlencoded",
+      Accept: "application/json",
+    },
+    body: new URLSearchParams({ token: input.token }),
+  });
+  if (response.ok || response.status === 400) return { ok: true };
+  const payload = await readPayload(response);
+  return { error: intuitFaultMessage(payload) ?? "QuickBooks Online could not revoke the connection" };
 }
 
 function intuitHeaders(accessToken: string): HeadersInit {
@@ -353,4 +405,25 @@ export async function postQboBill(
   const bill = parseQboBill(payload);
   if (!bill) return { error: intuitFaultMessage(payload) ?? "QuickBooks Online rejected the bill" };
   return bill;
+}
+
+export async function findQboBillByDocNumber(
+  fetchImpl: typeof fetch,
+  input: { apiBase: string; realmId: string; accessToken: string; docNumber: string; vendorId?: string },
+): Promise<{ id: string; syncToken: string | null } | { error: string } | null> {
+  const docNumber = input.docNumber.trim();
+  if (!docNumber) return null;
+  const query = `select * from Bill where DocNumber = ${intuitQueryLiteral(docNumber.slice(0, 21))}`;
+  const url = new URL(`${input.apiBase}/v3/company/${encodeURIComponent(input.realmId)}/query`);
+  url.searchParams.set("query", query);
+  url.searchParams.set("minorversion", QBO_MINOR_VERSION);
+  const response = await fetchImpl(url.toString(), { headers: intuitHeaders(input.accessToken) });
+  const payload = await readPayload(response);
+  if (!response.ok) {
+    return { error: intuitFaultMessage(payload) ?? "QuickBooks Online rejected the bill lookup" };
+  }
+  const rows = parseQboBillsFromQuery(payload);
+  const vendorId = input.vendorId?.trim();
+  const match = vendorId ? rows.find((row) => row.vendorId === vendorId) : rows[0];
+  return match ? { id: match.id, syncToken: match.syncToken } : null;
 }

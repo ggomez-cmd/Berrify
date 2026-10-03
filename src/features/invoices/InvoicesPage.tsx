@@ -223,7 +223,7 @@ export function InvoicesPage() {
       <p className="mb-4 max-w-2xl text-sm text-muted">
         Photograph a supplier invoice or a WhatsApp forward from that restaurant’s group.
         Berrify picks the books from the group name, caption, or sold-to (Semilla vs Kane
-        Rum Bar), then rolls SKUs into that restaurant’s QuickBooks Desktop Expenses tab.
+        Rum Bar), then rolls SKUs into that restaurant’s QuickBooks expense accounts.
       </p>
 
       <div className="mb-4 flex flex-wrap items-center gap-2 md:flex-nowrap">

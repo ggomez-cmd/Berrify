@@ -100,14 +100,14 @@ create policy quickbooks_online_connections_select_manager on public.quickbooks_
   for select using (public.has_org_role(org_id, array['owner', 'manager']));
 
 drop policy if exists quickbooks_online_vendors_manager on public.quickbooks_online_vendors;
-create policy quickbooks_online_vendors_manager on public.quickbooks_online_vendors
-  for all using (public.has_org_role(org_id, array['owner', 'manager']))
-  with check (public.has_org_role(org_id, array['owner', 'manager']));
+drop policy if exists quickbooks_online_vendors_select_manager on public.quickbooks_online_vendors;
+create policy quickbooks_online_vendors_select_manager on public.quickbooks_online_vendors
+  for select using (public.has_org_role(org_id, array['owner', 'manager']));
 
 drop policy if exists quickbooks_online_accounts_manager on public.quickbooks_online_accounts;
-create policy quickbooks_online_accounts_manager on public.quickbooks_online_accounts
-  for all using (public.has_org_role(org_id, array['owner', 'manager']))
-  with check (public.has_org_role(org_id, array['owner', 'manager']));
+drop policy if exists quickbooks_online_accounts_select_manager on public.quickbooks_online_accounts;
+create policy quickbooks_online_accounts_select_manager on public.quickbooks_online_accounts
+  for select using (public.has_org_role(org_id, array['owner', 'manager']));
 
 revoke all on public.quickbooks_online_connections from public;
 revoke all on public.quickbooks_online_connections from authenticated;
@@ -131,8 +131,8 @@ grant select (
   updated_at
 ) on public.quickbooks_online_connections to authenticated;
 
-grant select, insert, update, delete on public.quickbooks_online_vendors to authenticated;
-grant select, insert, update, delete on public.quickbooks_online_accounts to authenticated;
+grant select on public.quickbooks_online_vendors to authenticated;
+grant select on public.quickbooks_online_accounts to authenticated;
 
 grant all on public.quickbooks_online_connections to service_role;
 grant all on public.quickbooks_online_oauth_states to service_role;

@@ -10,8 +10,10 @@ import {
   mapQueryVendors,
   missingIntuitSecrets,
   parseQboBill,
+  parseQboBillsFromQuery,
   qboApiBase,
   qboRedirectUri,
+  queryResponseEntities,
 } from "./qbo-api";
 
 describe("QuickBooks Online API helpers", () => {
@@ -89,5 +91,19 @@ describe("QuickBooks Online API helpers", () => {
       { listId: "7", fullName: "Food Purchases", accountNumber: "50000", accountType: "Expense", isActive: true },
     ]);
     expect(findSyncedVendorId("local farm", [{ list_id: "56", full_name: "Local Farm", is_active: true }])).toBe("56");
+  });
+
+  it("reads a single QueryResponse entity object the same as an array", () => {
+    expect(queryResponseEntities({ QueryResponse: { Vendor: { Id: "56", DisplayName: "Local Farm" } } }, "Vendor")).toEqual([
+      { Id: "56", DisplayName: "Local Farm" },
+    ]);
+    expect(
+      mapQueryVendors({ QueryResponse: { Vendor: { Id: "56", DisplayName: "Local Farm", Active: true } } }),
+    ).toEqual([{ listId: "56", fullName: "Local Farm", companyName: null, isActive: true }]);
+    expect(
+      parseQboBillsFromQuery({
+        QueryResponse: { Bill: { Id: "991", SyncToken: "0", DocNumber: "6512495", VendorRef: { value: "56" } } },
+      }),
+    ).toEqual([{ id: "991", syncToken: "0", vendorId: "56", docNumber: "6512495" }]);
   });
 });

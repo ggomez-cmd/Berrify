@@ -96,6 +96,7 @@ describe("QuickbooksPage", () => {
     expect(screen.getByRole("button", { name: "Refresh accounts" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Regenerate password" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Connect QuickBooks Desktop" })).toBeInTheDocument();
+    expect(screen.getByText("Online not connected")).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "Connect QuickBooks Online" })).toHaveLength(1);
     expect(screen.getByText(/INTUIT_CLIENT_ID and INTUIT_CLIENT_SECRET/)).toBeInTheDocument();
     expect(screen.getByText(/https:\/\/berrify.app\/api\/qbo\/callback/)).toBeInTheDocument();

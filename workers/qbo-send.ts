@@ -4,9 +4,13 @@ import { publicAppUrl } from "./qbwc-qwc";
 import {
   accountMissingMessage,
   buildQboBillBody,
+  findQboBillByDocNumber,
   findSyncedVendorId,
   intuitNotConfiguredMessage,
+  isPersistedQboBillId,
   missingIntuitSecrets,
+  newQboSendClaim,
+  parseQboSendClaim,
   postQboBill,
   qboApiBase,
   qboRedirectUri,
@@ -15,6 +19,8 @@ import {
   vendorMissingMessage,
   type QboEnv,
 } from "./qbo-api";
+
+const SEND_CLAIM_TTL_MS = 120_000;
 
 export type QboSendEnv = QbwcRestEnv & QboEnv & { PUBLIC_APP_URL?: string };
 
@@ -79,8 +85,8 @@ export async function trySendQboInvoice(
   if (loaded === "unavailable") {
     return json({ error: "Could not check QuickBooks Online for this restaurant" }, 503);
   }
-  if (invoice.quickbooksTxnId) {
-    return json(completedJob(invoice, loaded.id, invoice.quickbooksTxnId));
+  if (isPersistedQboBillId(invoice.quickbooksTxnId)) {
+    return json(completedJob(invoice, loaded.id, invoice.quickbooksTxnId as string));
   }
   const access = await ensureOnlineAccessToken(env, loaded, fetchImpl);
   if ("error" in access) return json({ error: access.error }, access.status);
@@ -112,13 +118,48 @@ export async function trySendQboInvoice(
       description: expense.memo ?? "",
     });
   }
-  const ap = resolveQbAccountRef(invoice.apAccount, accounts);
+  let apAccountId: string | null = null;
+  if (invoice.apAccount.trim()) {
+    const ap = await resolveAccountId(fetchImpl, {
+      apiBase,
+      realmId: loaded.realm_id,
+      accessToken: access.accessToken,
+      stored: invoice.apAccount,
+      accounts,
+    });
+    if ("error" in ap) return json({ error: ap.error }, ap.status);
+    apAccountId = ap.id;
+  }
+
+  const existing = await findExistingBill(fetchImpl, {
+    apiBase,
+    realmId: loaded.realm_id,
+    accessToken: access.accessToken,
+    docNumber: invoice.invoiceNumber,
+    vendorId: vendorId.id,
+  });
+  if (existing && "error" in existing) return json({ error: existing.error }, 400);
+  if (existing) {
+    const saved = await saveBillId(env, orgId, invoice.id, existing.id, existing.syncToken, fetchImpl);
+    if (!saved) {
+      return json({ error: "QuickBooks Online already has this bill, but Berrify could not store the Bill id" }, 502);
+    }
+    return json(completedJob(invoice, loaded.id, existing.id));
+  }
+
+  const claim = await claimInvoiceSend(env, orgId, invoice.id, invoice.quickbooksTxnId, fetchImpl);
+  if (claim === "unavailable") return json({ error: "Could not lock this invoice for QuickBooks Online" }, 503);
+  if (claim.kind === "posted") return json(completedJob(invoice, loaded.id, claim.billId));
+  if (claim.kind === "busy") {
+    return json({ error: "This invoice is already being sent to QuickBooks Online" }, 409);
+  }
+
   const body = buildQboBillBody({
     vendorId: vendorId.id,
     txnDate: invoice.invoiceDate,
     dueDate: invoice.dueDate ?? invoice.invoiceDate,
     docNumber: invoice.invoiceNumber,
-    apAccountId: ap.listId,
+    apAccountId,
     lines,
   });
   const posted = await postQboBill(fetchImpl, {
@@ -127,10 +168,120 @@ export async function trySendQboInvoice(
     accessToken: access.accessToken,
     body,
   });
-  if ("error" in posted) return json({ error: posted.error }, 400);
+  if ("error" in posted) {
+    await releaseInvoiceSend(env, orgId, invoice.id, claim.token, fetchImpl);
+    return json({ error: posted.error }, 400);
+  }
   const saved = await saveBillId(env, orgId, invoice.id, posted.id, posted.syncToken, fetchImpl);
-  if (!saved) return json({ error: "QuickBooks Online created the bill, but Berrify could not store the Bill id" }, 502);
+  if (!saved) {
+    const recovered = await findExistingBill(fetchImpl, {
+      apiBase,
+      realmId: loaded.realm_id,
+      accessToken: access.accessToken,
+      docNumber: invoice.invoiceNumber,
+      vendorId: vendorId.id,
+    });
+    if (recovered && !("error" in recovered)) {
+      const retried = await saveBillId(env, orgId, invoice.id, recovered.id, recovered.syncToken, fetchImpl);
+      if (retried) return json(completedJob(invoice, loaded.id, recovered.id));
+    }
+    return json(
+      {
+        error: `QuickBooks Online created the bill (${posted.id}), but Berrify could not store the Bill id. Do not Send again until that id is saved.`,
+      },
+      502,
+    );
+  }
   return json(completedJob(invoice, loaded.id, posted.id));
+}
+
+async function findExistingBill(
+  fetchImpl: typeof fetch,
+  input: { apiBase: string; realmId: string; accessToken: string; docNumber: string | null; vendorId: string },
+) {
+  return findQboBillByDocNumber(fetchImpl, {
+    apiBase: input.apiBase,
+    realmId: input.realmId,
+    accessToken: input.accessToken,
+    docNumber: input.docNumber ?? "",
+    vendorId: input.vendorId,
+  });
+}
+
+async function claimInvoiceSend(
+  env: QboSendEnv,
+  orgId: string,
+  invoiceId: string,
+  currentTxnId: string | null,
+  fetchImpl: typeof fetch,
+): Promise<{ kind: "claimed"; token: string } | { kind: "posted"; billId: string } | { kind: "busy" } | "unavailable"> {
+  const supabaseUrl = env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceRole = env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!supabaseUrl || !serviceRole) return "unavailable";
+  const headers = { ...supabaseHeaders(serviceRole), Prefer: "return=representation", Accept: "application/json" };
+  const stale = parseQboSendClaim(currentTxnId);
+  const canTakeOver = Boolean(stale && Date.now() - stale.createdAt > SEND_CLAIM_TTL_MS);
+  const filter = canTakeOver
+    ? `invoices?id=eq.${encodeURIComponent(invoiceId)}&org_id=eq.${encodeURIComponent(orgId)}&quickbooks_txn_id=eq.${encodeURIComponent(currentTxnId ?? "")}`
+    : `invoices?id=eq.${encodeURIComponent(invoiceId)}&org_id=eq.${encodeURIComponent(orgId)}&quickbooks_txn_id=is.null`;
+  const token = newQboSendClaim();
+  const claimed = await fetchImpl(restUrl(supabaseUrl, filter), {
+    method: "PATCH",
+    headers,
+    body: JSON.stringify({ quickbooks_txn_id: token }),
+  });
+  if (claimed.ok) {
+    const rows = (await claimed.json()) as Array<{ quickbooks_txn_id?: string | null }>;
+    if (rows[0]?.quickbooks_txn_id === token) return { kind: "claimed", token };
+  }
+  const latest = await loadInvoiceTxnId(env, orgId, invoiceId, fetchImpl);
+  if (latest === "unavailable") return "unavailable";
+  if (isPersistedQboBillId(latest)) return { kind: "posted", billId: latest as string };
+  return { kind: "busy" };
+}
+
+async function releaseInvoiceSend(
+  env: QboSendEnv,
+  orgId: string,
+  invoiceId: string,
+  token: string,
+  fetchImpl: typeof fetch,
+): Promise<void> {
+  const supabaseUrl = env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceRole = env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!supabaseUrl || !serviceRole) return;
+  await fetchImpl(
+    restUrl(
+      supabaseUrl,
+      `invoices?id=eq.${encodeURIComponent(invoiceId)}&org_id=eq.${encodeURIComponent(orgId)}&quickbooks_txn_id=eq.${encodeURIComponent(token)}`,
+    ),
+    {
+      method: "PATCH",
+      headers: { ...supabaseHeaders(serviceRole), Prefer: "return=minimal" },
+      body: JSON.stringify({ quickbooks_txn_id: null }),
+    },
+  );
+}
+
+async function loadInvoiceTxnId(
+  env: QboSendEnv,
+  orgId: string,
+  invoiceId: string,
+  fetchImpl: typeof fetch,
+): Promise<string | null | "unavailable"> {
+  const supabaseUrl = env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceRole = env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!supabaseUrl || !serviceRole) return "unavailable";
+  const response = await fetchImpl(
+    restUrl(
+      supabaseUrl,
+      `invoices?id=eq.${encodeURIComponent(invoiceId)}&org_id=eq.${encodeURIComponent(orgId)}&select=quickbooks_txn_id&limit=1`,
+    ),
+    { headers: { ...supabaseHeaders(serviceRole), Accept: "application/json" } },
+  );
+  if (!response.ok) return "unavailable";
+  const rows = (await response.json()) as Array<{ quickbooks_txn_id?: string | null }>;
+  return rows[0]?.quickbooks_txn_id ?? null;
 }
 
 function completedJob(invoice: QboInvoiceForSend, connectionId: string, billId: string) {

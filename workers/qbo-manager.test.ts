@@ -136,6 +136,9 @@ describe("QuickBooks Online routes", () => {
           storedRestaurant = JSON.parse(String(init?.body)).restaurant_id as string;
           return new Response(null, { status: 201 });
         }
+        if (url.includes("quickbooks_online_oauth_states") && method === "DELETE") {
+          return new Response(null, { status: 204 });
+        }
         throw new Error(`${method} ${url}`);
       }),
     );
@@ -235,6 +238,7 @@ describe("Send routes Desktop and Online apart", () => {
     desktop: Array<Record<string, unknown>>;
     vendors?: unknown[];
     accounts?: unknown[];
+    existingBill?: Response;
     intuit?: (url: string, method: string, body: string) => Response | Promise<Response>;
   }): { fetchImpl: typeof fetch; jobs: Array<Record<string, unknown>>; intuitUrls: string[]; invoicePatches: unknown[] } {
     const jobs: Array<Record<string, unknown>> = [];
@@ -247,12 +251,19 @@ describe("Send routes Desktop and Online apart", () => {
       if (url.includes("intuit.com")) {
         intuitUrls.push(`${method} ${url}`);
         if (isIntuitVendorCreate(url, method)) throw new Error("VendorAdd");
+        if (url.includes("/query") && decodeURIComponent(url.replace(/\+/g, " ")).includes("from Bill")) {
+          return input.existingBill ?? Response.json({ QueryResponse: {} });
+        }
         if (input.intuit) return input.intuit(url, method, body);
         throw new Error(`${method} ${url}`);
       }
       if (url.includes("/rest/v1/invoices") && method === "GET") return Response.json([input.invoice]);
       if (url.includes("/rest/v1/invoices") && method === "PATCH") {
-        invoicePatches.push(JSON.parse(body));
+        const patch = JSON.parse(body) as Record<string, unknown>;
+        invoicePatches.push(patch);
+        if (typeof patch.quickbooks_txn_id === "string" && patch.quickbooks_txn_id.startsWith("pending:")) {
+          return Response.json([{ quickbooks_txn_id: patch.quickbooks_txn_id }]);
+        }
         return new Response(null, { status: 204 });
       }
       if (url.includes("quickbooks_online_connections") && method === "GET") {
@@ -334,6 +345,14 @@ describe("Send routes Desktop and Online apart", () => {
           account_type: "Expense",
           is_active: true,
         },
+        {
+          connection_id: "qbo-semilla",
+          list_id: "33",
+          full_name: "Accounts Payable",
+          account_number: "20000",
+          account_type: "AccountsPayable",
+          is_active: true,
+        },
       ],
       intuit: async (url, method, body) => {
         expect(method).toBe("POST");
@@ -355,9 +374,13 @@ describe("Send routes Desktop and Online apart", () => {
     expect(JSON.stringify(body)).not.toContain("refresh-semilla");
     expect(JSON.stringify(body)).not.toContain("access-semilla");
     expect(harness.jobs).toEqual([]);
-    expect(harness.invoicePatches).toEqual([
-      { quickbooks_txn_id: "991", quickbooks_edit_sequence: "0" },
-    ]);
+    expect(harness.invoicePatches[0]).toEqual({
+      quickbooks_txn_id: expect.stringMatching(/^pending:/),
+    });
+    expect(harness.invoicePatches[1]).toEqual({
+      quickbooks_txn_id: "991",
+      quickbooks_edit_sequence: "0",
+    });
   });
 
   it("returns the Intuit message when the vendor is missing and does not create one", async () => {
@@ -402,5 +425,142 @@ describe("Send routes Desktop and Online apart", () => {
     expect(body.error).toContain("INTUIT_CLIENT_ID");
     expect(harness.jobs).toEqual([]);
     expect(harness.intuitUrls).toEqual([]);
+  });
+
+  it("reuses a QuickBooks Online bill with the same invoice number and vendor", async () => {
+    const harness = sendFetch({
+      invoice: invoiceRow({ id: "inv-semilla", restaurant_id: "rest-semilla" }),
+      online: [semillaOnline],
+      desktop: [],
+      vendors: [{ connection_id: "qbo-semilla", list_id: "56", full_name: "Local Farm", is_active: true }],
+      accounts: [
+        {
+          connection_id: "qbo-semilla",
+          list_id: "7",
+          full_name: "Food Purchases",
+          account_number: "50000",
+          account_type: "Expense",
+          is_active: true,
+        },
+        {
+          connection_id: "qbo-semilla",
+          list_id: "33",
+          full_name: "Accounts Payable",
+          account_number: "20000",
+          account_type: "AccountsPayable",
+          is_active: true,
+        },
+      ],
+      existingBill: Response.json({
+        QueryResponse: { Bill: { Id: "880", SyncToken: "1", DocNumber: "6512495", VendorRef: { value: "56" } } },
+      }),
+    });
+    const response = await handleSendInvoice(intuitEnv, manager, "inv-semilla", harness.fetchImpl);
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { job: { quickbooks_txn_id: string } };
+    expect(body.job.quickbooks_txn_id).toBe("880");
+    expect(harness.intuitUrls.some((line) => line.includes("/bill"))).toBe(false);
+    expect(harness.invoicePatches).toEqual([{ quickbooks_txn_id: "880", quickbooks_edit_sequence: "1" }]);
+  });
+
+  it("fails when the A/P account is named but missing in QuickBooks Online", async () => {
+    const harness = sendFetch({
+      invoice: invoiceRow({ id: "inv-semilla", restaurant_id: "rest-semilla" }),
+      online: [semillaOnline],
+      desktop: [],
+      vendors: [{ connection_id: "qbo-semilla", list_id: "56", full_name: "Local Farm", is_active: true }],
+      accounts: [
+        {
+          connection_id: "qbo-semilla",
+          list_id: "7",
+          full_name: "Food Purchases",
+          account_number: "50000",
+          account_type: "Expense",
+          is_active: true,
+        },
+      ],
+      intuit: async (url) => {
+        expect(decodeURIComponent(url.replace(/\+/g, " "))).toContain("from Account");
+        return Response.json({ QueryResponse: {} });
+      },
+    });
+    const response = await handleSendInvoice(intuitEnv, manager, "inv-semilla", harness.fetchImpl);
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toContain("Accounts payable");
+    expect(harness.intuitUrls.some((line) => line.includes("/bill"))).toBe(false);
+  });
+
+  it("reads a single vendor object from Intuit when the cache is empty", async () => {
+    const harness = sendFetch({
+      invoice: invoiceRow({ id: "inv-semilla", restaurant_id: "rest-semilla" }),
+      online: [semillaOnline],
+      desktop: [],
+      vendors: [],
+      accounts: [
+        {
+          connection_id: "qbo-semilla",
+          list_id: "7",
+          full_name: "Food Purchases",
+          account_number: "50000",
+          account_type: "Expense",
+          is_active: true,
+        },
+        {
+          connection_id: "qbo-semilla",
+          list_id: "33",
+          full_name: "Accounts Payable",
+          account_number: "20000",
+          account_type: "AccountsPayable",
+          is_active: true,
+        },
+      ],
+      intuit: async (url, method, body) => {
+        const query = decodeURIComponent(url.replace(/\+/g, " "));
+        if (query.includes("from Vendor")) {
+          return Response.json({ QueryResponse: { Vendor: { Id: "56", DisplayName: "Local Farm", Active: true } } });
+        }
+        expect(method).toBe("POST");
+        expect(url).toContain("/v3/company/12345/bill");
+        const bill = JSON.parse(body) as { VendorRef: { value: string } };
+        expect(bill.VendorRef.value).toBe("56");
+        return Response.json({ Bill: { Id: "991", SyncToken: "0" } });
+      },
+    });
+    const response = await handleSendInvoice(intuitEnv, manager, "inv-semilla", harness.fetchImpl);
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { job: { quickbooks_txn_id: string } };
+    expect(body.job.quickbooks_txn_id).toBe("991");
+  });
+});
+
+describe("QuickBooks Online disconnect", () => {
+  it("revokes the Intuit refresh token before clearing local tokens", async () => {
+    const revoked: string[] = [];
+    const response = await handleQbo(
+      managerRequest("/api/qbo/connections/qbo-semilla/disconnect", {}),
+      intuitEnv,
+      "/api/qbo/connections/qbo-semilla/disconnect",
+      withManager(async (input, init) => {
+        const url = String(input);
+        const method = (init?.method ?? "GET").toUpperCase();
+        if (url.includes("quickbooks_online_connections") && method === "GET") {
+          return Response.json([semillaOnline]);
+        }
+        if (url.includes("oauth2/tokens/revoke")) {
+          revoked.push(String(init?.body));
+          return new Response(null, { status: 200 });
+        }
+        if (url.includes("quickbooks_online_connections") && method === "PATCH") {
+          const body = JSON.parse(String(init?.body)) as { refresh_token: unknown; is_active: boolean };
+          expect(body.is_active).toBe(false);
+          expect(body.refresh_token).toBeNull();
+          return new Response(null, { status: 204 });
+        }
+        throw new Error(`${method} ${url}`);
+      }),
+    );
+    expect(response?.status).toBe(200);
+    expect(revoked.join("&")).toContain("refresh-semilla");
   });
 });

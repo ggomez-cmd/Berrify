@@ -85,8 +85,8 @@ const requiredPolicies: Record<(typeof requiredTables)[number], string[]> = {
   quickbooks_accounts: ["quickbooks_accounts_manager"],
   quickbooks_online_connections: ["quickbooks_online_connections_select_manager"],
   quickbooks_online_oauth_states: [],
-  quickbooks_online_vendors: ["quickbooks_online_vendors_manager"],
-  quickbooks_online_accounts: ["quickbooks_online_accounts_manager"],
+  quickbooks_online_vendors: ["quickbooks_online_vendors_select_manager"],
+  quickbooks_online_accounts: ["quickbooks_online_accounts_select_manager"],
   invoice_pages: ["invoice_pages_manager"],
 };
 

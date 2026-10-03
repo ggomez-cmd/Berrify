@@ -37,5 +37,9 @@ npm run db:apply -- 0026_quickbooks_online.sql
 Review dropdowns for that restaurant use those vendors and accounts. Send
 posts `POST /v3/company/{realmId}/bill` with `VendorRef` and `AccountRef` ids
 and saves the QuickBooks Online Bill id on `invoices.quickbooks_txn_id`.
-If the vendor is missing, the send fails with Intuit’s message. Berrify does
-not call VendorAdd.
+If the vendor or a named expense / A/P account is missing, the send fails.
+Berrify does not create vendors or accounts.
+
+A second Send for the same invoice number and vendor reuses the existing Bill
+instead of posting another. Disconnect revokes the Intuit refresh token, then
+clears the local tokens.

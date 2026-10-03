@@ -1,7 +1,9 @@
+import { isPersistedQboBillId } from "./qbo-bill-id";
 import type {
   QbwcUiStatus,
   QuickbooksAccount,
   QuickbooksDesktopConnection,
+  QuickbooksOnlineConnection,
   QuickbooksSyncJob,
   QuickbooksVendor,
 } from "./types";
@@ -65,8 +67,19 @@ export function invoiceBooksStatus(
       }
     }
   }
-  if (txnId) return { label: `Synced (${txnId})`, tone: "ok" };
+  if (txnId && !isPersistedQboBillId(txnId)) return { label: "Sending", tone: "info" };
+  if (isPersistedQboBillId(txnId)) return { label: `Synced (${txnId})`, tone: "ok" };
   return null;
+}
+
+export function qboOnlineStatusLabel(
+  connection: QuickbooksOnlineConnection | null | undefined,
+): { label: string; tone: "ok" | "danger" | "neutral" } {
+  if (!connection || !connection.is_active) {
+    return { label: "Online not connected", tone: "neutral" };
+  }
+  if (connection.last_error) return { label: "Online error", tone: "danger" };
+  return { label: "Online connected", tone: "ok" };
 }
 
 export function invoiceQbJobLabel(job: QuickbooksSyncJob, txnId?: string | null): string {

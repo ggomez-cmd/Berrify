@@ -19,7 +19,13 @@ import {
   revokeQbwcConnection,
   rotateQbwcPassword,
 } from "../../lib/qbwc-manager-api";
-import { accountSyncSummary, qbwcStatusLabel, qbwcUiStatus, vendorSyncSummary } from "../../lib/qbwc-status";
+import {
+  accountSyncSummary,
+  qboOnlineStatusLabel,
+  qbwcStatusLabel,
+  qbwcUiStatus,
+  vendorSyncSummary,
+} from "../../lib/qbwc-status";
 import { isManager } from "../../lib/schedule";
 import type {
   QbwcUiStatus,
@@ -315,9 +321,21 @@ export function QuickbooksPage() {
                   <h2 className="text-base font-semibold text-ink">{target.title}</h2>
                   <p className="mt-0.5 text-sm text-muted">{target.subtitle}</p>
                 </div>
-                <Badge tone={statusTone(status)} dot>
-                  {qbwcStatusLabel(status)}
-                </Badge>
+                <div className="flex flex-col items-end gap-1">
+                  <Badge tone={statusTone(status)} dot>
+                    {qbwcStatusLabel(status)}
+                  </Badge>
+                  {target.restaurantId
+                    ? (() => {
+                        const onlineStatus = qboOnlineStatusLabel(online);
+                        return (
+                          <Badge tone={onlineStatus.tone} dot>
+                            {onlineStatus.label}
+                          </Badge>
+                        );
+                      })()
+                    : null}
+                </div>
               </div>
 
               {connection?.qb_company_name ? (
